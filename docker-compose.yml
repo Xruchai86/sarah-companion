@@ -1,0 +1,36 @@
+# S.A.R.A.H. Companion. Put it behind HTTPS (see README): push messages and "install as app" only work on https.
+services:
+  sarah-companion:
+    image: ghcr.io/xruchai86/sarah-companion:latest      # wird von GitHub Actions gebaut; lokal bauen: die nächste Zeile statt dieser
+    # build: .
+    container_name: sarah-companion
+    restart: unless-stopped
+    user: "99:100"                      # Unraid: nobody:users. Elsewhere use your own uid:gid that owns ./data
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      OPNSENSE_URL: "https://192.168.1.1"          # your firewall (https)
+      OPNSENSE_KEY: "xxxxxxxx"                      # API key of the user with the right "DECK: S.A.R.A.H. (Apps)"
+      OPNSENSE_SECRET: "xxxxxxxx"
+      UI_PASSWORD: "choose-a-long-password"         # at least 8 characters; protects everything, because this container holds the key
+      POLL_SECONDS: "60"                            # how often it looks at the firewall (15 and up)
+      VAPID_SUBJECT: "mailto:you@example.org"       # who the push services may contact (required by Apple)
+      # TRUST_PROXY: "1"                            # behind Traefik/Nginx: believe X-Forwarded-Proto/-For
+      # NTFY_URL: "http://ntfy:80"                  # optional: also send to a self-hosted ntfy
+      # NTFY_TOPIC: "sarah"
+      # NTFY_TOKEN: ""
+      # OPNSENSE_VERIFY: "pin"                      # pin (default, self-signed ok) | system (certificate from a real CA)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL

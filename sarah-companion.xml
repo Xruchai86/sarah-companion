@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>sarah-companion</Name>
+  <Repository>ghcr.io/xruchai86/sarah-companion:latest</Repository>
+  <Registry>https://github.com/xruchai86/sarah-companion/pkgs/container/sarah-companion</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/xruchai86/sarah-companion/issues</Support>
+  <Project>https://github.com/xruchai86/sarah-companion</Project>
+  <Overview>S.A.R.A.H. Companion: die Web-App fuer die KI-Waechterin deiner OPNsense-Firewall (Plugin os-scdeck). Lage mit dem S.A.R.A.H.-Kern, Auftraege, Untersuchungen, Aktionen mit Veto und Push-Meldungen fuer Handy und Desktop. Der Container haelt den API-Schluessel selbst, das Handy sieht ihn nie. Push und App-Installation brauchen https (z. B. Traefik davor).</Overview>
+  <Category>Network:Other Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8085]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/xruchai86/sarah-companion/main/sarah-companion.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/xruchai86/sarah-companion/main/app/static/icon-192.png</Icon>
+  <ExtraParams>--user 99:100 --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true</ExtraParams>
+  <Config Name="WebUI-Port" Target="8080" Default="8085" Mode="tcp" Description="Port der Web-App" Type="Port" Display="always" Required="true" Mask="false">8085</Config>
+  <Config Name="Daten" Target="/data" Default="/mnt/user/appdata/sarah-companion" Mode="rw" Description="Zertifikat-Fingerabdruck, Push-Geraete, Einstellungen, Push-Schluessel" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sarah-companion</Config>
+  <Config Name="Firewall-Adresse" Target="OPNSENSE_URL" Default="https://192.168.1.1" Mode="" Description="Adresse der Firewall, muss mit https:// beginnen" Type="Variable" Display="always" Required="true" Mask="false">https://192.168.1.1</Config>
+  <Config Name="API-Schluessel" Target="OPNSENSE_KEY" Default="" Mode="" Description="API-Schluessel des Benutzers mit dem Recht DECK: S.A.R.A.H. (Apps)" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="API-Geheimnis" Target="OPNSENSE_SECRET" Default="" Mode="" Description="Geheimnis zum API-Schluessel" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Passwort" Target="UI_PASSWORD" Default="" Mode="" Description="Passwort der Web-App, mindestens 8 Zeichen. Es schuetzt den Firewall-Schluessel in diesem Container." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Push-Kontakt" Target="VAPID_SUBJECT" Default="mailto:du@example.org" Mode="" Description="Kontakt fuer die Push-Dienste (mailto:...). Apple verlangt eine echte Adresse." Type="Variable" Display="always" Required="false" Mask="false">mailto:du@example.org</Config>
+  <Config Name="Abfrage-Takt" Target="POLL_SECONDS" Default="60" Mode="" Description="Sekunden zwischen zwei Blicken auf die Firewall (ab 15)" Type="Variable" Display="advanced" Required="false" Mask="false">60</Config>
+  <Config Name="Hinter Proxy" Target="TRUST_PROXY" Default="0" Mode="" Description="1 hinter Traefik/Nginx (glaubt X-Forwarded-Proto und -For)" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+  <Config Name="Zertifikat-Pruefung" Target="OPNSENSE_VERIFY" Default="pin" Mode="" Description="pin (Standard, selbst signiert ok) oder system (Zertifikat einer echten Zertifizierungsstelle)" Type="Variable" Display="advanced" Required="false" Mask="false">pin</Config>
+  <Config Name="ntfy-Adresse" Target="NTFY_URL" Default="" Mode="" Description="Optional: zusaetzlich ueber einen eigenen ntfy-Server melden" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="ntfy-Topic" Target="NTFY_TOPIC" Default="" Mode="" Description="Optional: ntfy-Topic" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>
