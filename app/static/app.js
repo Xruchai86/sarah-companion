@@ -6,7 +6,8 @@
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 
-  var VIEWS = [["core", "Kern"], ["tasks", "Aufträge"], ["insight", "Befunde"], ["actions", "Aktionen"], ["more", "Mehr"]];
+  var TASKS_ON = false;   // Aufträge per Text: abgeschaltet (zusammen mit TASKS_ON in os-scdeck scripts/scdeck/sarah.py)
+  var VIEWS = [["core", "Kern"], ["tasks", "Aufträge"], ["insight", "Befunde"], ["actions", "Aktionen"], ["more", "Mehr"]].filter(function (v) { return TASKS_ON || v[0] !== "tasks"; });
   var ICON = {
     core: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>',
     tasks: '<path d="M4 5h16v11H9l-5 4z"/>', insight: '<circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/>',
@@ -248,7 +249,7 @@
       el.innerHTML = imp.length ? imp.map(function (x, i) {
         return '<div class="card ' + (x.prio === "hoch" ? "bad" : x.prio === "mittel" ? "warn" : "") + '"><div class="row sp"><b>' + esc(x.title) + "</b>" + chip(x.prio || "", x.prio === "hoch" ? "bad" : x.prio === "mittel" ? "warn" : "") + "</div><p class=\"muted\" style=\"margin-top:8px\">" + esc(x.text) + "</p>" +
           ((x.ex || []).length ? '<details><summary>Beispiele</summary>' + x.ex.map(function (e) { return '<div class="tiny">' + esc(e) + "</div>"; }).join("") + "</details>" : "") +
-          '<div class="row" style="margin-top:8px"><button class="btn sm" data-act="imp-ask" data-i="' + i + '">Als Auftrag fragen</button></div></div>'; }).join("") : '<div class="card ok"><p class="muted">Nichts zu verbessern. Das ist gut.</p></div>';
+          (TASKS_ON ? '<div class="row" style="margin-top:8px"><button class="btn sm" data-act="imp-ask" data-i="' + i + '">Als Auftrag fragen</button></div>' : '') + '</div>'; }).join("") : '<div class="card ok"><p class="muted">Nichts zu verbessern. Das ist gut.</p></div>';
       return;
     }
     var inv = S.data && S.data.inv || { items: [] };
