@@ -77,7 +77,7 @@ def test_commands_reach_the_firewall_as_form_fields(fw, store):
 
 
 @pytest.mark.parametrize('cmd,val', [('task', ''), ('task', '   '), ('task', 'x' * 1001), ('invnow', '999.1.1.1'), ('invnow', 'abc'), ('invnow', '1.2.3.4; rm -rf'), ('invnow', '1.2.3.4\n'),
-                                     ('do', 'iso:1.2.3.4'), ('do', 'rul:../../etc'), ('do', 'dns:evil'), ('do', 'shp:apply;x'), ('release', 'abc'), ('release', '1234567'), ('release', '1 or 1'),
+                                     ('do', 'iso:1.2.3.4'), ('do', 'rul:../../etc'), ('do', 'dns:evil'), ('do', 'shp:apply;x'), ('do', 'ids:alert:abc'), ('do', 'tsk:x'), ('do', 'tsk:1234567'), ('do', 'ids:sets;x'), ('do', 'ids:off:12345678901'), ('release', 'abc'), ('release', '1234567'), ('release', '1 or 1'),
                                      ('set', 'a_dns'), ('setkey', 'opnsense'), ('noaus2', ''), ('', '')])
 def test_bad_input_never_leaves_this_process(fw, store, cmd, val):
     n = len(fw.calls)
@@ -86,7 +86,7 @@ def test_bad_input_never_leaves_this_process(fw, store, cmd, val):
     assert e.value.kind == 'input' and len(fw.calls) == n
 
 
-@pytest.mark.parametrize('cmd,val', [('do', 'iso:192.168.1.90:1790912487'), ('do', 'rul:11111111-2222-3333-4444-555555555555'), ('do', 'dns:rdr'), ('do', 'shp:apply'),
+@pytest.mark.parametrize('cmd,val', [('do', 'iso:192.168.1.90:1790912487'), ('do', 'rul:11111111-2222-3333-4444-555555555555'), ('do', 'dns:rdr'), ('do', 'shp:apply'), ('do', 'ids:alert:2010935'), ('do', 'ids:off:1'), ('do', 'ids:sets'), ('do', 'tsk:1'),
                                      ('do', 'pol:aa:bb:cc:00:02:21'), ('do', 'pol:192.168.2.21'), ('dismiss', 'dns:doh'), ('release', '42'), ('invnow', '2001:db8::1'), ('task', 'ä' * 1000)])
 def test_valid_input_is_accepted(cmd, val):
     assert check_command(cmd, val) == val.strip()

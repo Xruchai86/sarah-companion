@@ -19,7 +19,7 @@ import time
 import urllib.parse
 
 PATH = '/api/scdeck/stats/sarah'
-ID_ACTION = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dot)|shp:apply|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
+ID_ACTION = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|tsk:[0-9]{1,6}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
 ID_JOURNAL = re.compile(r'\d{1,6}')
 
 

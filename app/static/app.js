@@ -162,7 +162,7 @@
     if (p.type === "dns" && p.affected && p.affected.length) return "Betrifft " + esc(p.affected.slice(0, 3).map(who).join(", ")) + (p.affected.length > 3 ? " …" : "");
     if (p.type === "isolate") return "Vorfall mit Wert " + esc(p.score) + " · " + esc((p.sources || []).join(", "));
     if (p.type === "shaper") return "Latenz unter Last +" + esc(p.add_ms) + " ms · " + esc(p.down_bw) + " / " + esc(p.up_bw) + " Mbit/s";
-    return esc(p.reason || p.text || "");
+    return esc(p.why || p.reason || p.text || "");
   }
 
   function updCore() {
