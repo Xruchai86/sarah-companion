@@ -45,6 +45,8 @@ Wie bei deinen anderen Apps: Du schiebst den Code mit GitHub Desktop nach GitHub
 
 Die Tests laufen vor jedem Bau; ein Fehler darin stoppt die Veröffentlichung, es entsteht kein kaputtes Image.
 
+**Gepflegt und nachprüfbar:** Vor jedem Bau prüft `pip-audit` die eingefrorenen Abhängigkeiten auf bekannte Schwachstellen (ein Fund stoppt den Bau). Dependabot schlägt jede Woche Updates für Python-Pakete, das Basisimage und die GitHub-Actions vor; du siehst sie unter *Pull requests* und übernimmst sie mit einem Klick, der Bau prüft sie vorher. Jedes Image trägt eine Stückliste (SBOM) und einen Herkunftsnachweis. Das Image selbst wird in zwei Stufen gebaut: Im laufenden Container gibt es weder `pip` noch Bauwerkzeuge, er läuft nie als root, nur `/data` ist beschreibbar.
+
 | Meldung | Ursache |
 |---|---|
 | Unraid: `pull access denied` / `unauthorized` | Das Paket ist noch **privat** (Schritt 5), oder du hast es mit anderem Namen angelegt. |

@@ -3,4 +3,11 @@ tools
 __pycache__
 *.pyc
 .git
+.github
+.gitattributes
+.gitignore
+.pytest_cache
+data
 README.md
+sarah-companion.xml
+docker-compose.yml
