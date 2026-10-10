@@ -1,6 +1,6 @@
 # S.A.R.A.H. Companion - two stages: build in a throw-away stage, run without pip or build tools, never as root.
 # Both stages use the SAME base (the venv's python points into it). Dependabot proposes base image updates.
-FROM python:3.12-slim-bookworm AS build
+FROM python:3.14-slim-bookworm AS build
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /srv
 COPY requirements.txt constraints.txt ./
@@ -10,7 +10,7 @@ RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip uninstall -y pip setuptools wheel \
  && find /opt/venv -name '__pycache__' -prune -exec rm -rf {} +
 
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-bookworm
 LABEL org.opencontainers.image.title="S.A.R.A.H. Companion" \
       org.opencontainers.image.description="Web-App für die KI-Wächterin der OPNsense (Plugin os-scdeck): Lage, Vorschläge, Aktionen, Push" \
       org.opencontainers.image.source="https://github.com/xruchai86/sarah-companion"
