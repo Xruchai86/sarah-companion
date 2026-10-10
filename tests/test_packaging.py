@@ -100,3 +100,31 @@ def test_what_the_image_copies_exists_and_what_it_leaves_out_is_not_needed_to_ru
     ign = read('.dockerignore')
     assert 'tests' in ign and not re.search(r'^app', ign, re.M)
     assert 'import tests' not in read('app', 'main.py') + read('app', 'notify.py') + read('app', 'opn.py') + read('app', 'store.py'), 'the app must not need the test folder'
+
+
+def test_dependabot_never_proposes_major_jumps_and_groups_python_updates():
+    """multidict 6 -> 7 broke the build: aiohttp pins multidict<7. Major jumps need a deliberate look; related packages move together."""
+    d = yaml.safe_load(read('.github', 'dependabot.yml'))
+    pip = [u for u in d['updates'] if u['package-ecosystem'] == 'pip'][0]
+    assert any('version-update:semver-major' in i.get('update-types', []) for i in pip.get('ignore', []))
+    assert set(pip['groups']['python']['update-types']) == {'minor', 'patch'}
+    py = [u for u in d['updates'] if u['package-ecosystem'] == 'docker'][0]
+    assert any('version-update:semver-minor' in i.get('update-types', []) for i in py.get('ignore', [])), 'python 3.12 -> 3.13 only on purpose'
+
+
+def test_the_pinned_versions_fit_together():
+    """every pin satisfies what the other pinned packages require (the check pip did on GitHub, here before a push)"""
+    import importlib.metadata as md
+    from packaging.requirements import Requirement
+    pins = {l.split('==')[0].lower().replace('_', '-'): l.split('==')[1].strip() for l in read('constraints.txt').splitlines() if '==' in l}
+    bad = []
+    for name in pins:
+        try:
+            reqs = md.requires(name) or []
+        except md.PackageNotFoundError:
+            continue
+        for r in map(Requirement, reqs):
+            n = r.name.lower().replace('_', '-')
+            if n in pins and (r.marker is None or r.marker.evaluate({'extra': ''})) and not r.specifier.contains(pins[n], prereleases=True):
+                bad.append('%s needs %s%s, pinned %s' % (name, n, r.specifier, pins[n]))
+    assert not bad, bad

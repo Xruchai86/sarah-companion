@@ -1,12 +1,25 @@
-# Weekly update proposals (as pull requests): Python packages, the base image, the GitHub Actions.
+# Weekly update proposals (pull requests). The tests run on every proposal; a proposal that breaks something never becomes an image.
+# Python: minor and patch updates come TOGETHER in one proposal (packages that depend on each other are updated and tested as one);
+# major jumps (e.g. multidict 6 -> 7) are not proposed automatically: they may break a package that pins "<7" (aiohttp did) and need a
+# deliberate look.
 version: 2
 updates:
   - package-ecosystem: pip
     directory: /
     schedule: { interval: weekly }
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
