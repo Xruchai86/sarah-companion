@@ -326,6 +326,12 @@
       (d.error ? '<p class="warnline" style="margin-top:8px">' + esc(d.error) + "</p>" : "") + '<p class="tiny" style="margin-top:8px">Letzter Kontakt ' + esc(ago(h.ok_t)) + " · Prüfung: " + (d.verify === "system" ? "Zertifikat der Zertifizierungsstelle" : "Fingerabdruck (selbst signiert)") + "</p>" +
       (pn ? '<pre class="fp">SHA-256 ' + esc(pn.fp) + "</pre><div class=\"tiny\">gemerkt seit " + esc(dayClock(pn.since)) + "</div>" : "") +
       (d.verify !== "system" ? '<div class="row" style="margin-top:10px"><button class="btn sm' + (d.kind === "pin" ? " bad" : "") + '" data-act="pin-trust">Zertifikat erneut bestätigen …</button></div>' : "") + "</div>";
+    var tl = d.tls || {}, tlsBad = tl.error || (tl.on && tl.days_left < 14);
+    html += '<div class="card' + (tlsBad ? " warn" : "") + '"><h3>HTTPS dieser App</h3>' + (tl.on ?
+        '<div class="row sp"><b class="mono">' + esc((tl.names || []).join(", ")) + '</b><span class="chip ok">AN</span></div><p class="tiny" style="margin-top:6px">gültig bis ' + esc(String(tl.valid_to || "").slice(0, 10)) +
+        " (" + esc(tl.days_left) + " Tage) · Aussteller " + esc(tl.issuer || "?") + " · " + esc(tl.file || "") + "</p>" :
+        '<p class="tiny">Aus: kein Zertifikat in <span class="mono">/data/tls</span>. Mit einem Zertifikat aus deinem ACME-Client der OPNsense (Automatisierung „Upload certificate via SFTP“) spricht die App HTTPS - dann funktionieren Push und die Installation als App ohne Proxy. Anleitung im README.</p>') +
+      (tl.error ? '<p class="warnline" style="margin-top:8px">' + esc(tl.error) + "</p>" : "") + (tl.on && tl.days_left < 14 ? '<p class="warnline" style="margin-top:8px">Läuft bald ab: erneuert der ACME-Client nicht mehr?</p>' : "") + "</div>";
     var pushHtml;
     if (!ps.supported) pushHtml = '<p class="warnline">' + (ps.secure === false ? "Push braucht eine sichere Verbindung (https). Öffne die App über deine https-Adresse." : "Dieser Browser kann keine Push-Meldungen empfangen. Auf iPhone/iPad: erst „Zum Home-Bildschirm“ hinzufügen.") + "</p>";
     else pushHtml = '<div class="row sp"><span>Auf diesem Gerät: ' + (ps.on ? chip("an", "ok") : chip("aus", "")) + '</span><span class="row">' + (ps.on ? '<button class="btn sm" data-act="push-test">Test</button><button class="btn sm ghost" data-act="push-off">Ausschalten</button>' : '<button class="btn sm pri" data-act="push-on">Einschalten</button>') + "</span></div>" +

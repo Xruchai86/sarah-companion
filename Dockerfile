@@ -23,6 +23,6 @@ COPY app ./app
 USER sarah
 VOLUME /data
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','8080'), timeout=4)"
+# HTTPS when a certificate is in /data/tls, otherwise HTTP: app/healthcheck.py tries both
+HEALTHCHECK --interval=30s --timeout=8s --start-period=10s --retries=3 CMD ["python", "-m", "app.healthcheck"]
 CMD ["python", "-m", "app"]

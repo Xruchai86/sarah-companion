@@ -24,6 +24,7 @@
   <Config Name="Abfrage-Takt" Target="POLL_SECONDS" Default="60" Mode="" Description="Sekunden zwischen zwei Blicken auf die Firewall (ab 15)" Type="Variable" Display="advanced" Required="false" Mask="false">60</Config>
   <Config Name="Hinter Proxy" Target="TRUST_PROXY" Default="0" Mode="" Description="1 hinter Traefik/Nginx (glaubt X-Forwarded-Proto und -For)" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
   <Config Name="Zertifikat-Pruefung" Target="OPNSENSE_VERIFY" Default="pin" Mode="" Description="pin (Standard, selbst signiert ok) oder system (Zertifikat einer echten Zertifizierungsstelle)" Type="Variable" Display="advanced" Required="false" Mask="false">pin</Config>
+  <Config Name="Zertifikat-Ordner" Target="TLS_DIR" Default="/data/tls" Mode="" Description="HTTPS: hierhin laedt der ACME-Client der OPNsense per SFTP fullchain.pem und key.pem (Automatisierung Upload certificate via SFTP, Pfad .../appdata/sarah-companion/tls). Leer = HTTP wie bisher." Type="Variable" Display="advanced" Required="false" Mask="false">/data/tls</Config>
   <Config Name="ntfy-Adresse" Target="NTFY_URL" Default="" Mode="" Description="Optional: zusaetzlich ueber einen eigenen ntfy-Server melden" Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="ntfy-Topic" Target="NTFY_TOPIC" Default="" Mode="" Description="Optional: ntfy-Topic" Type="Variable" Display="advanced" Required="false" Mask="false"/>
 </Container>

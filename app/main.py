@@ -18,6 +18,7 @@ from flask.sessions import SecureCookieSessionInterface
 
 from . import VERSION
 from .notify import Poller, Pusher
+from .tls import TLS
 from .opn import Opn, OpnError, PinMismatch, fmt_fp
 from .store import Store
 
@@ -195,7 +196,7 @@ def create_app(env=None, start_poller=True):
         return jsonify({'status': poller.st, 'inv': poller.inv, 'stale': stale or poller.st is None, 'error': err_msg, 'kind': kind, 'now': int(time.time()),
                         'health': poller.health, 'pin': ({'fp': fmt_fp(pin['fp']), 'since': pin['since']} if pin else None), 'verify': opn.verify,
                         'push': {'key': pusher.public_key(), 'devices': len(store.subs()), 'ntfy': bool(pusher.ntfy)}, 'prefs': store.prefs(), 'version': VERSION,
-                        'host': opn.host})
+                        'host': opn.host, 'tls': TLS.public()})
 
     # ------------------------------------------------------------ commands (fixed list)
     def simple(cmd, field=None):

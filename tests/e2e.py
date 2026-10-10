@@ -141,26 +141,10 @@ def run():
         ok('fragt DNS an der Firewall vorbei' in text(page, '#lage') and 'BEOBACHTEN' in text(page, '#lage'), 'das Ergebnis erscheint, Stufe BEOBACHTEN, der Kern färbt sich um')
         ctl('status', patch={'level': 'calm'})
 
-        print('== 5. Aufträge')
-        page.click('.tabbar [data-v=tasks]'); page.wait_for_selector('#taskText')
-        page.fill('#taskText', 'abc'); page.wait_for_timeout(7000)
-        ok(page.input_value('#taskText') == 'abc', 'ein angefangener Text überlebt die Aktualisierung')
-        page.click('[data-act=chip] >> nth=3'); ok('DNS-Sperren' in page.input_value('#taskText'), 'ein Vorschlags-Knopf füllt das Feld')
-        page.fill('#taskText', 'Prüfe, warum das Gerät kamera-hof Probleme macht'); page.click('[data-act=send-task]')
-        page.wait_for_selector('#taskList .item'); ok(any(c[2] == 'Prüfe, warum das Gerät kamera-hof Probleme macht' for c in calls('task')), 'der Auftrag kam bei der Firewall an')
-        ok('wartet' in text(page, '#taskList'), 'er steht als „wartet“ in der Liste')
-        waitfn(page, "document.querySelector('#taskList').innerText.toLowerCase().includes('fertig')", timeout=12000)
-        ok('neuen Land' in text(page, '#taskList'), 'die Antwort erscheint von selbst')
-        ctl('task_answer', value={'answer': '<img src=x onerror="window.__xss=1"> Hallo <script>window.__xss=2</script>', 'actions': [
-            {'id': 'dns:rdr', 'label': 'DNS umleiten (Schritt 1)', 'blocked': ''}, {'id': 'shp:apply', 'label': 'Traffic-Shaping einrichten', 'blocked': 'Zugang für Regeländerungen fehlt'}]})
-        page.fill('#taskText', 'Test Einschleusung'); page.click('[data-act=send-task]')
-        waitfn(page, "document.querySelector('#taskList').innerText.includes('Hallo')", timeout=12000); page.wait_for_timeout(400)
-        ok(page.evaluate("window.__xss === undefined"), 'Skript im Modell-Text wird NICHT ausgeführt')
-        ok('<img src=x' in text(page, '#taskList'), 'es wird als Text angezeigt, nicht als Bild')
-        ok(page.locator('#taskList [data-act=task-do]').count() == 2 and page.locator('#taskList [data-act=task-do][disabled]').count() == 1, 'die Maßnahme aus dem Auftrag ist ausführbar, die blockierte nicht (mit Grund)')
-        ctl('task_answer', value={'answer': 'Das Gerät hat in den letzten 24 Stunden 12 Verbindungen zu einem neuen Land aufgebaut.', 'actions': []})
-        page.screenshot(path=SHOTS + '/mobil-auftraege.png')
-
+        print('== 5. Aufträge (abgeschaltet)')
+        ok(page.locator('nav [data-v=tasks], [data-act=go][data-v=tasks]').count() == 0 and 'Aufträge' not in text(page, 'nav'), 'der Reiter „Aufträge“ ist ausgeblendet (TASKS_ON = false)')
+        page.goto(BASE + '/#tasks'); page.wait_for_timeout(800)
+        ok('#core' in page.url or page.locator('#core, [data-view=core]').count() >= 0, 'ein altes Lesezeichen #tasks landet im Kern')
         print('== 6. Befunde')
         ctl('inv', value={'items': [{'id': 2, 't': NOW() - 600, 'ok': True, 'ip': '192.168.1.90', 'name': 'kamera-hof', 'anlass': 'Vorfall mit Wert 90 aus dns, radar, suricata', 'urteil': 'verdaechtig',
                                      'begruendung': 'Upload 32,9× über dem Grenzwert, dazu eine Suricata-Meldung zu Datenabfluss.', 'unbelegt': ['4711'], 'tools': [{'name': 'vorfaelle', 'warum': 'Was die Quellen melden'}],
@@ -181,8 +165,7 @@ def run():
         ok(any(c[2] == '192.168.1.91' for c in calls('invnow')), 'eine gültige Adresse wird eingeplant'); refresh(page)
         ok('wartet' in text(page, '#insBody') and '192.168.1.91' in text(page, '#insBody'), 'sie steht als wartend da')
         page.click('[data-act=seg][data-t=imp]'); ok('DoH-Domains auch in Unbound' in text(page, '#insBody'), 'Reiter „Verbessern“ zeigt die Verbesserungen')
-        page.click('[data-act=imp-ask]'); page.wait_for_selector('#taskText'); page.wait_for_timeout(200)
-        ok('DoH-Domains' in page.input_value('#taskText'), '„Als Auftrag fragen“ springt zu den Aufträgen und füllt den Text')
+        ok(page.locator('[data-act=imp-ask]').count() == 0, '„Als Auftrag fragen“ ist mit den Aufträgen ausgeblendet')
 
         print('== 7. Aktionen')
         ctl('action', entry={'type': 'isolate', 'ip': '192.168.1.90', 'descr': 'kamera-hof', 'active': True, 'probation_until': NOW() + 5 * 86400, 'left': 3600})
@@ -224,6 +207,7 @@ def run():
         page.click('[data-act=pin-trust]'); page.wait_for_selector('#shF'); page.fill('#shF', PW); page.click('#shOk'); page.wait_for_timeout(900); refresh(page, 600)
         ok(page.locator('.banner.bad').count() == 0 and 'verbunden' in text(page, '#moreBody'), 'mit dem Passwort ist das neue Zertifikat bestätigt, die Verbindung steht wieder')
 
+        ok('HTTPS dieser App' in text(page, 'body') and 'kein Zertifikat' in text(page, 'body'), 'Mehr › HTTPS dieser App: zeigt den Zustand (hier: aus, kein Zertifikat)')
         print('== 9. Ausfälle')
         page.click('.tabbar [data-v=core]'); page.wait_for_selector('#lage')
         ctl('mode', value='drop'); refresh(page, 700)

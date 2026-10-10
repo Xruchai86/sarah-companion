@@ -4,7 +4,7 @@ import json, os, sys, tempfile, threading, copy, time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from waitress import serve
+from cheroot import wsgi
 from tests.fake_opn import FakeOpn, base_status
 from app.main import create_app
 
@@ -57,4 +57,5 @@ class Ctl(BaseHTTPRequestHandler):
 ctl = ThreadingHTTPServer(('127.0.0.1', 0), Ctl)
 threading.Thread(target=ctl.serve_forever, daemon=True).start()
 print(json.dumps({'app': APP_PORT, 'ctl': ctl.server_address[1]}), flush=True)
-serve(app, host='127.0.0.1', port=APP_PORT, threads=8)
+srv = wsgi.Server(('127.0.0.1', APP_PORT), app, numthreads=8, server_name='sarah')
+srv.safe_start()

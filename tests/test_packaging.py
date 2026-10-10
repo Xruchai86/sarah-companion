@@ -44,6 +44,7 @@ def test_every_variable_of_the_template_is_read_by_the_app_and_the_required_ones
     variables = {c.get('Target'): c for c in t.findall('Config') if c.get('Type') == 'Variable'}
     src = read('app', 'main.py') + read('app', '__main__.py')
     used = set(re.findall(r"env(?:\.get\(|\[)'([A-Z_]+)'", src)) | {'PORT'}
+    used |= set(re.findall(r'environ\.get\("([A-Z_]+)"', read('app', 'tls.py')))
     assert set(variables) <= used, 'the template offers a setting the app ignores: %s' % (set(variables) - used)
     for need in ('OPNSENSE_URL', 'OPNSENSE_KEY', 'OPNSENSE_SECRET', 'UI_PASSWORD'):
         assert variables[need].get('Required') == 'true', need

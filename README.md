@@ -59,7 +59,24 @@ Die Tests laufen vor jedem Bau; ein Fehler darin stoppt die Veröffentlichung, e
 
 Beim **ersten Kontakt** merkt sich der Container den SHA-256-Fingerabdruck des Zertifikats der Firewall (selbst signiert ist in Ordnung). Ändert sich das Zertifikat später, sendet er **nichts mehr**, bis du unter *Mehr › Verbindung* mit deinem Passwort bestätigst. Hast du ein Zertifikat einer echten Zertifizierungsstelle: `OPNSENSE_VERIFY=system`.
 
-## 3. HTTPS (nötig für Push und „App installieren“)
+## 3. HTTPS mit dem Zertifikat deiner OPNsense (ACME)
+
+Hat dein ACME-Client auf der OPNsense ein Zertifikat für einen Namen wie `sarah.deine-domain.de`, kann die App es direkt nutzen: Die Firewall lädt es nach jeder Erneuerung per SFTP in den Datenordner, die App merkt das von selbst. Dann laufen **Push-Meldungen und die Installation als App ohne Traefik**. Die App bekommt dafür **keinerlei zusätzliche Rechte** an der Firewall.
+
+1. **Unraid:** SSH einschalten (*Settings › Management Access › Use SSH*) und den Ordner `/mnt/user/appdata/sarah-companion/tls` anlegen.
+2. **OPNsense:** *Dienste › ACME Client › Automatisierungen* › **+**
+   - Typ: **Upload certificate via SFTP**
+   - Host: die IP deines Unraid-Servers, Port 22, Benutzer z. B. `root`
+   - Identität: z. B. `ed25519` - das Plugin erzeugt den Schlüssel und zeigt den öffentlichen Teil an. Den hinterlegst du bei diesem Benutzer auf Unraid als erlaubten SSH-Schlüssel (dauerhaft, je nach Unraid-Version in der Benutzerverwaltung oder unter `/boot/config/ssh`).
+   - Zielpfad: `/mnt/user/appdata/sarah-companion/tls`
+   - Gruppe (chgrp): `100` · Rechte Zertifikat: `0640` · Rechte Schlüssel: `0640` - der Container läuft als Benutzer 99 / Gruppe 100 und muss den Schlüssel lesen können.
+3. Die Automatisierung beim Zertifikat eintragen (*Zertifikate › bearbeiten › Automatisierungen*) und einmal *Ausstellen/Erneuern* klicken.
+4. **DNS:** Der Name muss auf die App zeigen, z. B. als Host-Override in Unbound: `sarah.deine-domain.de` → `192.168.1.231`.
+5. Aufrufen: `https://sarah.deine-domain.de:8085`
+
+Was die App dabei tut: Sie sucht `fullchain.pem` (sonst `cert.pem`) und `key.pem` im Ordner oder im Unterordner, den das Plugin anlegt. Ein Zertifikat wird nur genommen, wenn der Schlüssel passt und es gültig ist. Eine Erneuerung übernimmt sie im laufenden Betrieb, ohne Neustart. Ein kaputter oder halber Upload ersetzt nie ein funktionierendes Zertifikat. Den Zustand (Name, gültig bis, Aussteller, Fehler) zeigt *Mehr › HTTPS dieser App*. Ohne Zertifikat läuft sie wie bisher über HTTP.
+
+## 3b. HTTPS über einen Proxy (Traefik o. Ä.) (nötig für Push und „App installieren“)
 
 Browser erlauben Push und Installation nur über **https** (oder `localhost`). Ohne https läuft die App trotzdem, aber ohne Meldungen. Beispiel mit Traefik (`TRUST_PROXY=1` setzen):
 
