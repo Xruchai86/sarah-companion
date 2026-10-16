@@ -93,6 +93,8 @@ class Analyzer:
         self.dblock = threading.Lock()
         self.stop_ev = threading.Event()
         self.server = None
+        from .feeder import Feeder
+        self.feeder = Feeder()
         import duckdb
         self.con = duckdb.connect(self.db_path)
         self.con.execute("SET threads = %d" % max(1, int(env.get('ANALYZER_THREADS', '2') or 2)))
@@ -216,6 +218,11 @@ class Analyzer:
                     f.write(b'\n'.join(eve) + b'\n')
                 before = self.con.execute('SELECT COUNT(*) FROM eve').fetchone()[0]
                 self.con.execute(EVE_SQL, [path])
+                if self.feeder:
+                    try:
+                        self.feeder.pick(self.con, path)               # what the DECK on the firewall needs (Analyzer mode)
+                    except Exception:
+                        log.exception('analyzer: feed records not picked')
                 n = self.con.execute('SELECT COUNT(*) FROM eve').fetchone()[0] - before
                 written += n
                 bad += len(eve) - n
@@ -302,6 +309,6 @@ class Analyzer:
             rows = {tb: self.con.execute('SELECT COUNT(*), MIN(t), MAX(t) FROM %s' % tb).fetchone() for tb in ('eve', 'sys', 'fw')}
         pem = self.cert_pem()
         return {'port': self.port, 'tls': self.tls, 'allow': [str(n) for n in self.allow], 'days': self.days, 'max_gb': round(self.max_bytes / 1024 ** 3, 1),
-                'bytes': self.size(), 'queue': self.q.qsize(), 'counters': c,
+                'bytes': self.size(), 'queue': self.q.qsize(), 'counters': c, 'feed': dict(self.feeder.c),
                 'tables': {tb: {'rows': r[0], 'first': int(r[1]) if r[1] else None, 'last': int(r[2]) if r[2] else None} for tb, r in rows.items()},
                 'cert': pem, 'cert_sha256': hashlib.sha256(pem.encode()).hexdigest() if pem else ''}

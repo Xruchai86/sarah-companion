@@ -19,7 +19,7 @@ import time
 import urllib.parse
 
 PATH = '/api/scdeck/stats/sarah'
-ID_ACTION = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|hrd:(dnssec|rebind|wan_blockpriv|wan_blockbogons|tlslog|evelimit)|tsk:[0-9]{1,6}|cat:[a-z0-9-]{1,40}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
+ID_ACTION = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dohcore|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|hrd:(dnssec|rebind|wan_blockpriv|wan_blockbogons|tlslog|evelimit)|tsk:[0-9]{1,6}|cat:[a-z0-9-]{1,40}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
 ID_JOURNAL = re.compile(r'\d{1,6}')
 CASE = re.compile(r'(new|progress|done|false):\d{1,12}')
 NOTE_B64 = re.compile(r'[A-Za-z0-9_-]{1,1400}={0,2}')
@@ -55,8 +55,17 @@ def valid_ip(v):
 def check_command(cmd, value=''):
     """-> value to send, or raises OpnError. Mirrors the firewall's own input rules."""
     value = '' if value is None else str(value)
-    if cmd in ('analyze', 'tasks', 'inv', 'noaus', 'incidents', 'rulemap'):
+    if cmd in ('analyze', 'tasks', 'inv', 'noaus', 'incidents', 'rulemap', 'job', 'apps'):
         return ''
+    if cmd == 'appdev':
+        v = value.strip().lower()
+        if not re.fullmatch(r'([0-9a-f]{2}(:[0-9a-f]{2}){5}|[0-9a-f.:]{3,45})', v):
+            raise OpnError('Ungültiges Gerät.', 'input')
+        return v
+    if cmd in ('feed', 'jobdone'):                             # the Analyzer's delivery (8 MB) / a model reply (4 MB): JSON built here
+        if len(value) > (8 if cmd == 'feed' else 4) * 1024 * 1024:
+            raise OpnError('Lieferung zu groß.', 'input')
+        return value
     if cmd in ('icase', 'inote', 'ihand'):                    # working on an incident: <ip>|<status>:<until> | <ip>|<note, base64url> | <ip>
         ip, sep, rest = value.partition('|')
         if cmd == 'ihand' and sep:

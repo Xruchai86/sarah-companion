@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
-ACTION_ID = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|tsk:[0-9]{1,6}|cat:[a-z0-9-]{1,40}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
+ACTION_ID = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dohcore|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|tsk:[0-9]{1,6}|cat:[a-z0-9-]{1,40}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
 
 
 def make_cert(cn='opnsense.test'):
@@ -190,6 +190,22 @@ class FakeOpn:
             hit[0]['active'] = False
             hit[0]['undone'] = True
             return {'ok': True}
+        if cmd in ('apps', 'appdev'):                            # shaped like l7.status() of os-scdeck (Zenarmor source)
+            dev = {'key': '0a:00:27:00:00:04', 'ip': '192.168.1.20', 'start': now - 30 * 86400, 'learning': False, 'apps': 2, 'unknown_share': 0.1, 'risk': 2, 'oldtls': []}
+            if cmd == 'appdev':
+                if not re.fullmatch(r'([0-9a-f]{2}(:[0-9a-f]{2}){5}|[0-9a-f.:]{3,45})', value):
+                    return {'error': 'invalid device'}
+                dev = dict(dev, detail=[{'app': 'teamviewer', 'first': now - 600, 'last': now - 60, 'n': 12, 'host': 'router9.teamviewer.com'}],
+                           zapps=[{'name': 'Netflix', 'cat': 'Streaming', 'first': now - 3600, 'last': now - 30, 'n': 340}], unknown=[])
+            return {'now': now, 'source': 'zenarmor', 'analyzer': True, 'devices': [dev],
+                    'apps': [{'app': 'netflix', 'name': 'Netflix', 'cat': 'streaming', 'cat_name': 'Streaming', 'risk': 0, 'devices': 1, 'n': 340, 'last': now - 30},
+                             {'app': 'teamviewer', 'name': 'TeamViewer', 'cat': 'remote_access', 'cat_name': 'Fernzugriff', 'risk': 2, 'devices': 1, 'n': 12, 'last': now - 60}],
+                    'events': [], 'hint': ''}
+        if cmd == 'job':
+            return {'job': None, 'why': 'nothing'}
+        if cmd == 'feed':
+            json.loads(value)
+            return {'ok': True, 'own': ['10.0.3.15']}
         if cmd == 'rulemap':
             return {'rules': dict(getattr(self, 'rulemap', {}))}
         if cmd == 'incidents':

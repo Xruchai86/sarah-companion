@@ -24,6 +24,7 @@ from .opn import Opn, OpnError, PinMismatch, fmt_fp
 from .store import Store
 from .analyzer import Analyzer
 from .logs import Logs, BadQuery
+from .runner import Runner
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 PUSH_HOSTS = ('fcm.googleapis.com', '.push.services.mozilla.com', '.push.apple.com', '.notify.windows.com', '.push.microsoft.com')
@@ -99,8 +100,9 @@ def create_app(env=None, start_poller=True):
     allow_any_push = env.get('PUSH_ALLOW_ANY') == '1'                 # tests only
     analyzer = Analyzer(store.dir, env, default_allow=opn.host) if env.get('ANALYZER_PORT', '6514') != '0' else None
     logs = Logs(analyzer) if analyzer else None
+    runner = Runner() if env.get('SARAH_RUNNER', '1') != '0' else None
     rulemap = {'t': 0, 'v': {}}
-    app.extensions['sarah'] = {'opn': opn, 'store': store, 'pusher': pusher, 'poller': poller, 'throttle': throttle, 'analyzer': analyzer, 'logs': logs}
+    app.extensions['sarah'] = {'opn': opn, 'store': store, 'pusher': pusher, 'poller': poller, 'throttle': throttle, 'analyzer': analyzer, 'logs': logs, 'runner': runner}
 
     def pw_ok(candidate):
         return hmac.compare_digest(hashlib.pbkdf2_hmac('sha256', (candidate or '').encode(), salt, 200_000), pwhash)
@@ -202,7 +204,7 @@ def create_app(env=None, start_poller=True):
         return jsonify({'status': poller.st, 'inv': poller.inv, 'stale': stale or poller.st is None, 'error': err_msg, 'kind': kind, 'now': int(time.time()),
                         'health': poller.health, 'pin': ({'fp': fmt_fp(pin['fp']), 'since': pin['since']} if pin else None), 'verify': opn.verify,
                         'push': {'key': pusher.public_key(), 'devices': len(store.subs()), 'ntfy': bool(pusher.ntfy)}, 'prefs': store.prefs(), 'version': VERSION,
-                        'host': opn.host, 'tls': TLS.public()})
+                        'host': opn.host, 'tls': TLS.public(), 'runner': runner.c if runner else None})
 
     # ------------------------------------------------------------ commands (fixed list)
     def simple(cmd, field=None):
@@ -297,6 +299,15 @@ def create_app(env=None, start_poller=True):
             return fn()
         except BadQuery as e:
             return err(str(e))
+
+    @app.get('/api/apps')
+    def apps():
+        """applications per device from the firewall (Zenarmor per device, Suricata mapped through NAT)"""
+        g = guard(False)
+        if g:
+            return g
+        key = request.args.get('device', '')
+        return fw('appdev', key) if key else fw('apps')
 
     @app.get('/api/logs/counts')
     def logs_counts():
@@ -432,4 +443,7 @@ def create_app(env=None, start_poller=True):
         poller.start()
         if analyzer:
             analyzer.start()
+            threading.Thread(target=analyzer.feeder.run, args=(opn, analyzer, threading.Event()), daemon=True, name='feeder').start()
+        if runner:
+            threading.Thread(target=runner.run, args=(opn, threading.Event()), daemon=True, name='runner').start()
     return app

@@ -113,6 +113,17 @@ def test_lines_of_1_2_0_are_migrated(tmp_path):
     assert L.search('traffic', {})['total'] == 1 and L.search('system', {})['total'] == 1
 
 
+def test_applications_per_device_come_from_the_firewall(cli):
+    c, fw, app = cli
+    r = c.get('/api/apps').get_json()
+    assert r['ok'] and r['result']['source'] == 'zenarmor' and r['result']['devices'][0]['ip'] == '192.168.1.20' and ('POST', 'apps', None) in fw.calls
+    r = c.get('/api/apps?device=0A:00:27:00:00:04').get_json()
+    assert r['result']['devices'][0]['zapps'][0]['name'] == 'Netflix' and ('POST', 'appdev', '0a:00:27:00:00:04') in fw.calls
+    n = len(fw.calls)
+    assert c.get('/api/apps?device=x;rm').status_code == 400 and len(fw.calls) == n, 'an invalid device never reaches the firewall'
+    assert app.test_client().get('/api/apps').status_code == 401
+
+
 def test_the_api(cli):
     c, fw, app = cli
     a = app.extensions['sarah']['analyzer']

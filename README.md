@@ -221,6 +221,12 @@ Anmeldungen. Gesendet wird von **syslog-ng der OPNsense** (kein Python, kaum Las
 - Aufbewahrung: `ANALYZER_DAYS` (30 Tage) und `ANALYZER_MAX_GB` (20 GB), die ältesten Tage gehen zuerst.
 - Ist der Container weg, puffert die Firewall bis zu 100 MB auf ihrer Platte und liefert nach.
 - `ANALYZER_PORT=0` schaltet den Analyzer ab.
+- **S.A.R.A.H. fragt das Modell über den Companion** (ab 1.5.0, Plugin ab 0.63, nur Ollama): Die Firewall stellt die Fragen und prüft jede
+  Antwort, der Container wartet auf Ollama. Die Ollama-Adresse kommt aus den S.A.R.A.H.-Einstellungen der Firewall; der Container muss sie
+  erreichen. Cloud-Modelle fragt weiter die Firewall (ihre Schlüssel bleiben dort). `SARAH_RUNNER=0` schaltet es ab.
+- **Analyzer-Modus** (ab 1.4.0, Plugin ab 0.62): Jede Minute liefert der Analyzer der Firewall die fertig zerlegten Datensätze, die das DECK braucht
+  (TLS/HTTP je Gerät, Alarme). Die Firewall liest eve.json dann nicht mehr selbst. Kommt 10 Minuten lang keine Lieferung, liest sie wieder selbst.
+  Unter **Mehr › Analyzer** steht, wann zuletzt geliefert wurde; im DECK unter Einstellungen › Analyzer „ANALYZER-MODUS“.
 
 ## 6. Sicherheit
 

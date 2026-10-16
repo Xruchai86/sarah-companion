@@ -115,6 +115,7 @@
       return '<div class="mon-head"><div class="seg">' + LT.map(function (t) { return '<button data-act="mon-kind" data-k="' + t[0] + '">' + t[1] + " <i></i></button>"; }).join("") + "</div>" +
         '<div class="seg">' + RANGES.map(function (r) { return '<button data-act="mon-range" data-r="' + r[0] + '">' + r[1] + "</button>"; }).join("") + "</div>" +
         '<input id="monQ" type="search" placeholder="Suchen (Signatur, Name, Meldung …)" autocomplete="off" value="' + esc(MON.f.q || "") + '">' +
+        '<div class="seg" id="appView" hidden><button data-act="app-view" data-v="dev">Je Gerät</button><button data-act="app-view" data-v="raw">Rohdaten</button></div>' +
         '<button class="btn sm ghost" id="monLive" data-act="mon-live">Live</button><a class="btn sm ghost" id="monCsv" href="#" download>CSV</a></div><div class="row" id="monChips" style="margin:8px 0 12px"></div><div id="monBody"></div>';
     },
     more: function () { return '<div id="moreBody"></div>'; }
@@ -131,7 +132,7 @@
     if (v === "incidents") loadIncidents();
     $("#view").classList.toggle("wide", v === "monitor");
     if (v === "monitor") {
-      monLoad(false); api("GET", "/api/logs/rules").then(function (r) { MON.rules = r || {}; if (S.mounted === "monitor") updMonitor(); }).catch(function () { /* names are a help */ });
+      monLoad(false); if (MON.kind === "app") loadApps(); api("GET", "/api/logs/rules").then(function (r) { MON.rules = r || {}; if (S.mounted === "monitor") updMonitor(); }).catch(function () { /* names are a help */ });
       var q = $("#monQ"), qt = null; q.addEventListener("input", function () { clearTimeout(qt); qt = setTimeout(function () { monSearch(q.value.trim()); }, 400); });
     }
     window.scrollTo(0, 0);
@@ -435,6 +436,11 @@
       '<div class="facts" style="margin-top:10px"><div><b>Suricata</b><span>' + (e.rows || 0).toLocaleString("de-DE") + '</span></div><div><b>System</b><span>' + (sy.rows || 0).toLocaleString("de-DE") + '</span></div><div><b>Speicher</b><span>' + gb(a.bytes || 0) + " / " + esc(a.max_gb) + ' GB</span></div><div><b>Aufbewahrung</b><span>' + esc(a.days) + " Tage</span></div></div>" +
       '<p class="tiny" style="margin-top:8px">Empfangen ' + (c.received || 0) + " · geschrieben " + (c.written || 0) + " · verworfen " + ((c.dropped_queue || 0) + (c.dropped_long || 0)) + " · unlesbar " + (c.bad || 0) + " · abgewiesen " + (c.refused || 0) + " · zuletzt " + esc(c.last ? ago(c.last) : "nie") + "</p>" +
       '<p class="tiny">Erlaubte Absender: ' + esc((a.allow || []).join(", ") || "keiner") + "</p>" +
+      (S.data && S.data.runner ? '<p class="tiny">Modell-Fragen von S.A.R.A.H. (über diesen Container): ' + S.data.runner.analyses + " Analysen, " + S.data.runner.investigations + " Untersuchungen" +
+        (S.data.runner.busy ? " · gerade: " + (S.data.runner.busy.kind === "analyze" ? "Lage-Analyse" : "Untersuchung") : "") + (S.data.runner.why === "cloud" ? " · Cloud-Modell: fragt die Firewall selbst" : "") +
+        (S.data.runner.error ? '</p><p class="warnline">' + esc(S.data.runner.error) : "") + "</p>" : "") +
+      (a.feed ? '<p class="tiny">Lieferung an die Firewall (Analyzer-Modus): ' + (a.feed.last ? "zuletzt " + esc(ago(a.feed.last)) + " · " + a.feed.delivered + " Lieferungen, " + a.feed.records + " Datensätze" : "noch keine") +
+        (a.feed.failed ? " · " + a.feed.failed + " fehlgeschlagen" : "") + (a.feed.error ? '</p><p class="warnline">' + esc(a.feed.error) : "") + "</p>" : "") +
       (a.cert ? '<details><summary>Zertifikat für die Firewall (DECK › Einstellungen › Analyzer)</summary><pre class="fp">' + esc(a.cert) + '</pre><div class="tiny">SHA-256 ' + esc(a.cert_sha256) + "</div></details>" : "") + "</div>";
   }
   /* ---- Monitor: the firewall's logs in the Analyzer, like the Monitor tab of Panorama / Log View of FortiAnalyzer.
@@ -484,6 +490,12 @@
   }
   function updMonitor() {
     var el = $("#monBody"); if (!el) return;
+    var av = $("#appView"); if (av) { av.hidden = MON.kind !== "app"; $$("[data-act=app-view]").forEach(function (b) { b.classList.toggle("on", b.dataset.v === APPV.view); }); }
+    if (MON.kind === "app" && APPV.view === "dev") {
+      $$("[data-act=mon-kind]").forEach(function (b) { b.classList.toggle("on", b.dataset.k === MON.kind); var c = MON.counts[b.dataset.k]; b.querySelector("i").textContent = c != null ? c.toLocaleString("de-DE") : ""; });
+      slot("#monChips").innerHTML = '<span class="tiny">Je Gerät: wie die Firewall die Anwendungen zuordnet. Für Suricatas Rohzeilen „Rohdaten“ wählen.</span>';
+      return updApps();
+    }
     var cols = LCOLS[MON.kind], s = MON.sum || { hist: [], top: {} };
     $$("[data-act=mon-kind]").forEach(function (b) { b.classList.toggle("on", b.dataset.k === MON.kind); var c = MON.counts[b.dataset.k]; b.querySelector("i").textContent = c != null ? c.toLocaleString("de-DE") : ""; });
     $$("[data-act=mon-range]").forEach(function (b) { b.classList.toggle("on", +b.dataset.r === MON.range); });
@@ -519,6 +531,31 @@
       sheet({ title: "Eintrag", html: '<div class="facts">' + rows + '</div><details><summary class="tiny">Rohdaten</summary><pre class="fp raw">' + esc(pretty) + "</pre></details>", cancel: "Schließen" });
     }).catch(function (e) { toast(errMsg(e), true); });
   }
+  /* applications per device: the firewall's App-ID (Zenarmor per device, Suricata behind NAT mapped to the device) - the raw Suricata lines of the
+     Analyzer show the uplink address as sender when Suricata runs on the WAN */
+  var APPV = { view: "dev", d: null, open: null, det: null, err: null };
+  function loadApps() {
+    return api("GET", "/api/apps").then(function (j) { APPV.d = j.result || {}; APPV.err = null; }).catch(function (e) { APPV.err = errMsg(e); })
+      .then(function () { if (S.mounted === "monitor" && MON.kind === "app" && APPV.view === "dev") updApps(); });
+  }
+  function updApps() {
+    var el = $("#monBody"); if (!el) return;
+    if (APPV.err) { el.innerHTML = '<div class="card bad"><h3>Anwendungen je Gerät nicht abrufbar</h3><p>' + esc(APPV.err) + "</p></div>"; return; }
+    var d = APPV.d; if (!d) { el.innerHTML = '<div class="card"><p class="muted">Lade …</p></div>'; return; }
+    var src = d.source === "zenarmor" ? "Zenarmor je Gerät (mit MAC), ergänzt um Suricata" : "Suricata (TLS/HTTP), am WAN über die NAT-Zuordnung der Firewall";
+    var byId = {}; (d.apps || []).forEach(function (a) { byId[a.app] = a; });
+    var devs = d.devices || [], RK = ["", "Hinweis", "erhöht", "hoch"];
+    el.innerHTML = '<div class="card"><h3>' + devs.length + " Geräte · " + (d.apps || []).length + ' Anwendungen</h3><p class="tiny">Quelle: ' + esc(src) + (d.analyzer ? " · ausgewertet vom Analyzer" : "") + "</p></div>" +
+      (devs.length ? '<div class="card logs"><table class="lt"><tr><th>Gerät</th><th>Anwendungen</th><th>unbekannt</th><th>Risiko</th><th></th></tr>' + devs.map(function (r) {
+        var row = '<tr><td><b>' + esc(who(r.ip)) + "</b>" + (r.key !== r.ip ? '<div class="tiny mono">' + esc(r.key) + "</div>" : "") + "</td><td>" + r.apps + "</td><td>" + Math.round((r.unknown_share || 0) * 100) + " %</td><td>" +
+          (r.risk ? chip(RK[r.risk], r.risk >= 3 ? "bad" : r.risk >= 2 ? "warn" : "") : "") + '</td><td><button class="btn sm ghost" data-act="app-dev" data-k="' + esc(r.key) + '">›</button></td></tr>';
+        if (APPV.open !== r.key) return row;
+        var dt = APPV.det && (APPV.det.devices || []).filter(function (x) { return x.key === r.key; })[0];
+        return row + '<tr><td colspan="5">' + (!dt ? '<p class="muted">Lade …</p>' :
+          ((dt.zapps || []).length ? '<p class="tiny">Zenarmor erkennt: ' + dt.zapps.slice(0, 25).map(function (z) { return esc(z.name) + " ×" + z.n; }).join(", ") + "</p>" : "") +
+          (dt.detail || []).slice(0, 30).map(function (x) { var a = byId[x.app] || { name: x.app }; return '<div class="item"><b>' + esc(a.name) + "</b> " + (a.risk >= 2 ? chip(RK[a.risk], "warn") : "") + '<div class="tiny">' + esc(x.host) + " · " + x.n + " Verbindungen · zuletzt " + esc(ago(x.last)) + "</div></div>"; }).join("")) + "</td></tr>";
+      }).join("") + "</table></div>" : '<div class="card"><p class="muted">' + esc(d.hint || "Noch kein Gerät erkannt.") + "</p></div>");
+  }
   function monSearch(v) { if (v) MON.f.q = v; else delete MON.f.q; monLoad(false); }
   function doThen(label, p, after) { return p.then(function () { toast(label); return refresh(); }).then(after || function () { }).catch(function (e) { toast(errMsg(e), true); }); }
   document.addEventListener("click", function (e) {
@@ -540,7 +577,10 @@
     if (a === "chip") { var c = CHIPS[+b.dataset.i], ta = $("#taskText"); ta.value = c; ta.focus(); ta.setSelectionRange(c.length, c.length); return; }
     if (a === "mic") { dictate(); return; }
     if (a === "seg") { S.insightTab = b.dataset.t; updInsight(); return; }
-    if (a === "mon-kind") { MON.kind = b.dataset.k; MON.f = MON.f.q ? { q: MON.f.q } : {}; monSave(); monLoad(false); return; }
+    if (a === "mon-kind") { MON.kind = b.dataset.k; MON.f = MON.f.q ? { q: MON.f.q } : {}; monSave(); monLoad(false); if (MON.kind === "app") loadApps(); return; }
+    if (a === "app-view") { APPV.view = b.dataset.v; updMonitor(); if (APPV.view === "dev") loadApps(); else monLoad(false); return; }
+    if (a === "app-dev") { var k = b.dataset.k; APPV.open = APPV.open === k ? null : k; APPV.det = null; updApps();
+      if (APPV.open) api("GET", "/api/apps?device=" + encodeURIComponent(k)).then(function (j) { if (APPV.open === k) { APPV.det = j.result; updApps(); } }).catch(function (e) { toast(errMsg(e), true); }); return; }
     if (a === "mon-range") { MON.range = +b.dataset.r; monSave(); monLoad(false); return; }
     if (a === "mon-f") { MON.f[b.dataset.k] = b.dataset.v; if (S.sheet) closeSheet(); monLoad(false); return; }
     if (a === "mon-unf") { delete MON.f[b.dataset.k]; if (b.dataset.k === "q") $("#monQ").value = ""; monLoad(false); return; }
