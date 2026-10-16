@@ -10,7 +10,7 @@ from app.main import create_app
 
 fw = FakeOpn()
 data = tempfile.mkdtemp()
-env = {'UI_PASSWORD': 'ein-langes-passwort', 'OPNSENSE_URL': fw.url, 'OPNSENSE_KEY': fw.key, 'OPNSENSE_SECRET': fw.secret, 'DATA_DIR': data}
+env = {'UI_PASSWORD': 'ein-langes-passwort', 'OPNSENSE_URL': fw.url, 'OPNSENSE_KEY': fw.key, 'OPNSENSE_SECRET': fw.secret, 'DATA_DIR': data}  # the Analyzer exists (logs), but start_poller=False: it does not listen
 app = create_app(env, start_poller=False)
 ext = app.extensions['sarah']
 APP_PORT = int(os.environ.get('APP_PORT', '0')) or 18090
@@ -50,6 +50,8 @@ class Ctl(BaseHTTPRequestHandler):
             elif cmd == 'prefs': out['prefs'] = ext['store'].prefs()
             elif cmd == 'subs': out['subs'] = ext['store'].subs()
             elif cmd == 'invalidate': ext['poller'].st_t = 0
+            elif cmd == 'logs': ext['analyzer'].flush([x.encode() for x in c['lines']])          # lines as syslog-ng of the firewall sends them
+            elif cmd == 'rulemap': fw.rulemap = c['value']
         data_ = json.dumps(out).encode()
         self.send_response(200); self.send_header('Content-Length', str(len(data_))); self.end_headers(); self.wfile.write(data_)
 

@@ -5,6 +5,7 @@ Die Web-App für die KI-Wächterin deiner Firewall. Auf dem Handy und am Desktop
 - **Kern** – derselbe Kern wie in OPNsense, mit Lage, Fakten und dem Verlauf der letzten Analysen. „Jetzt analysieren“ per Fingertipp.
 - **Aufträge** – gib ihr Aufgaben: *„Prüfe, warum das Gerät kamera-hof Probleme macht“*. Auch per Sprache. Sie antwortet mit dem, was sie in den Daten findet, und bietet Maßnahmen an, die **du** bestätigst.
 - **Befunde** – ihre Untersuchungen (was sie sich angesehen hat, Urteil, Plan) und ihre Verbesserungsvorschläge. Ein Gerät kannst du selbst untersuchen lassen.
+- **Monitor** – die Protokolle der Firewall wie in Panorama oder FortiAnalyzer: Bedrohungen, Anwendungen (TLS/HTTP), Firewall-Verkehr, System. Zeitraum, Suche, Filter per Antippen eines Werts („ohne“ schließt aus), Verlauf und Top-Listen, Details mit Rohdaten, CSV. Braucht den Analyzer (5b).
 - **Vorfälle** – wie im DECK: Risikowert, Quellen, Zeitverlauf, „Warum dieser Wert“; Status setzen, Notizen, an S.A.R.A.H. übergeben. Eine Meldung über einen Vorfall öffnet direkt diese Ansicht.
 - **Aktionen** – was sie getan hat, mit Probezeit und **Veto**. Dazu der **Not-Aus**.
 - **Meldungen** – nach einem Scan, der nicht ruhig ist; bei einem Vorfall; wenn sie selbst gehandelt hat; wenn etwas auf dich wartet; wenn die Firewall nicht erreichbar ist. **Ein ruhiger Scan meldet sich nie.** Mit Ruhezeiten.

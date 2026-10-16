@@ -7,10 +7,10 @@
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 
   var TASKS_ON = false;   // Aufträge per Text: abgeschaltet (zusammen mit TASKS_ON in os-scdeck scripts/scdeck/sarah.py)
-  var VIEWS = [["core", "Kern"], ["incidents", "Vorfälle"], ["tasks", "Aufträge"], ["insight", "Befunde"], ["actions", "Aktionen"], ["more", "Mehr"]].filter(function (v) { return TASKS_ON || v[0] !== "tasks"; });
+  var VIEWS = [["core", "Kern"], ["incidents", "Vorfälle"], ["monitor", "Monitor"], ["tasks", "Aufträge"], ["insight", "Befunde"], ["actions", "Aktionen"], ["more", "Mehr"]].filter(function (v) { return TASKS_ON || v[0] !== "tasks"; });
   var ICON = {
     core: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>',
-    tasks: '<path d="M4 5h16v11H9l-5 4z"/>', incidents: '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17v.5"/>', insight: '<circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/>',
+    tasks: '<path d="M4 5h16v11H9l-5 4z"/>', incidents: '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17v.5"/>', monitor: '<path d="M3 20h18M6 16V9M10 16V5M14 16v-6M18 16V8"/>', insight: '<circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/>',
     actions: '<path d="M13 2L5 14h6l-1 8 8-12h-6z"/>', more: '<path d="M4 7h16M4 12h16M4 17h16"/>'
   };
   var LEVEL = { calm: ["RUHIG", "ok"], watch: ["BEOBACHTEN", "warn"], alert: ["ALARM", "bad"] };
@@ -111,6 +111,12 @@
     insight: function () { return '<div class="row" style="margin-bottom:12px"><div class="seg"><button data-act="seg" data-t="inv">Untersuchungen</button><button data-act="seg" data-t="imp">Verbessern</button></div></div><div id="insBody"></div>'; },
     actions: function () { return '<div id="actTop"></div><div class="card" id="actLog"></div><div class="danger"><div class="lbl" style="color:var(--bad)">Not-Aus</div><p class="muted" style="margin:8px 0 12px">Hebt alle aktiven Eingriffe von S.A.R.A.H. auf und schaltet alle Fähigkeiten aus. Sie bleibt im Modus „Beobachten“.</p><button class="btn bad" data-act="noaus">Not-Aus …</button></div>'; },
     incidents: function () { return '<div class="row" style="margin-bottom:12px"><div class="seg"><button data-act="iseg" data-t="live">Aktuell</button><button data-act="iseg" data-t="done">Erledigt</button></div><span class="tiny" id="incTs"></span></div><div id="incBody"></div>'; },
+    monitor: function () {
+      return '<div class="mon-head"><div class="seg">' + LT.map(function (t) { return '<button data-act="mon-kind" data-k="' + t[0] + '">' + t[1] + " <i></i></button>"; }).join("") + "</div>" +
+        '<div class="seg">' + RANGES.map(function (r) { return '<button data-act="mon-range" data-r="' + r[0] + '">' + r[1] + "</button>"; }).join("") + "</div>" +
+        '<input id="monQ" type="search" placeholder="Suchen (Signatur, Name, Meldung …)" autocomplete="off" value="' + esc(MON.f.q || "") + '">' +
+        '<button class="btn sm ghost" id="monLive" data-act="mon-live">Live</button><a class="btn sm ghost" id="monCsv" href="#" download>CSV</a></div><div class="row" id="monChips" style="margin:8px 0 12px"></div><div id="monBody"></div>';
+    },
     more: function () { return '<div id="moreBody"></div>'; }
   };
   var mounted = {};
@@ -123,6 +129,11 @@
     if (v === "tasks") { loadTasks(); var mic = $("#mic"); if (mic && (window.SpeechRecognition || window.webkitSpeechRecognition)) mic.hidden = false; }
     if (v === "more") { refreshPush(); loadAn(); }
     if (v === "incidents") loadIncidents();
+    $("#view").classList.toggle("wide", v === "monitor");
+    if (v === "monitor") {
+      monLoad(false); api("GET", "/api/logs/rules").then(function (r) { MON.rules = r || {}; if (S.mounted === "monitor") updMonitor(); }).catch(function () { /* names are a help */ });
+      var q = $("#monQ"), qt = null; q.addEventListener("input", function () { clearTimeout(qt); qt = setTimeout(function () { monSearch(q.value.trim()); }, 400); });
+    }
     window.scrollTo(0, 0);
   }
   function unmountView() { if (S.mounted === "core" && S.core) S.core.pause(true); if (S.rec) { try { S.rec.stop(); } catch (e) { /* not running */ } } }
@@ -426,6 +437,89 @@
       '<p class="tiny">Erlaubte Absender: ' + esc((a.allow || []).join(", ") || "keiner") + "</p>" +
       (a.cert ? '<details><summary>Zertifikat für die Firewall (DECK › Einstellungen › Analyzer)</summary><pre class="fp">' + esc(a.cert) + '</pre><div class="tiny">SHA-256 ' + esc(a.cert_sha256) + "</div></details>" : "") + "</div>";
   }
+  /* ---- Monitor: the firewall's logs in the Analyzer, like the Monitor tab of Panorama / Log View of FortiAnalyzer.
+     Four log types, time range, text search, field filters (a value in the table is a filter with one tap, "!" excludes), overview with
+     the course over time and top lists, detail of an entry, CSV with the same filters. Everything is filtered on the server. */
+  var LT = [["threat", "Bedrohungen"], ["app", "Anwendungen"], ["traffic", "Firewall"], ["system", "System"]];
+  var LCOLS = {
+    threat: [["t", "Zeit"], ["sev", "Schwere"], ["action", "Aktion"], ["src", "Quelle"], ["dst", "Ziel"], ["dport", "Port"], ["sig", "Signatur"]],
+    app: [["t", "Zeit"], ["type", "Art"], ["src", "Gerät"], ["host", "Name"], ["dst", "Ziel"], ["dport", "Port"], ["version", "TLS"]],
+    traffic: [["t", "Zeit"], ["action", "Aktion"], ["dir", "Richtung"], ["iface", "Schnittstelle"], ["proto", "Protokoll"], ["src", "Quelle"], ["dst", "Ziel"], ["dport", "Port"], ["rid", "Regel"]],
+    system: [["t", "Zeit"], ["program", "Programm"], ["msg", "Meldung"]]
+  };
+  var LF = { src: "Quelle", dst: "Ziel", port: "Port", action: "Aktion", sev: "Schwere", proto: "Protokoll", iface: "Schnittstelle", host: "Name", rid: "Regel", program: "Programm", sig: "Signatur", type: "Art", dir: "Richtung", version: "TLS", q: "Text" };
+  var FILTERABLE = { sev: 1, action: 1, src: 1, dst: 1, dport: "port", sport: "port", sig: 1, host: 1, type: 1, dir: 1, iface: 1, proto: 1, rid: 1, program: 1, version: 1 };
+  var RANGES = [[3600, "1 h"], [86400, "24 h"], [7 * 86400, "7 Tage"], [30 * 86400, "30 Tage"]];
+  var MON = { kind: "threat", range: 86400, f: {}, rows: [], total: 0, offset: 0, sum: null, counts: {}, rules: {}, live: true, timer: null, busy: false };
+  (function () { try { var x = JSON.parse(localStorage.getItem("sarah.mon") || "{}"); if (x.kind) MON.kind = x.kind; if (x.range) MON.range = x.range; } catch (e) { /* private mode */ } })();
+  function monSave() { try { localStorage.setItem("sarah.mon", JSON.stringify({ kind: MON.kind, range: MON.range })); } catch (e) { /* private mode */ } }
+  function monQuery(extra) {
+    var p = { from: Math.floor(nowS() - MON.range) }; Object.keys(MON.f).forEach(function (k) { p[k] = MON.f[k]; });
+    Object.keys(extra || {}).forEach(function (k) { p[k] = extra[k]; });
+    return Object.keys(p).map(function (k) { return encodeURIComponent(k) + "=" + encodeURIComponent(p[k]); }).join("&");
+  }
+  function monLoad(more) {
+    if (MON.busy) return; MON.busy = true;
+    var off = more ? MON.rows.length : 0, base = "/api/logs/" + MON.kind;
+    var jobs = [api("GET", base + "?" + monQuery({ offset: off, limit: 100 }))];
+    if (!more) jobs.push(api("GET", base + "/summary?" + monQuery()), api("GET", "/api/logs/counts"));
+    Promise.all(jobs).then(function (r) {
+      MON.rows = more ? MON.rows.concat(r[0].rows) : r[0].rows; MON.total = r[0].total; MON.err = null;
+      if (!more) { MON.sum = r[1]; MON.counts = r[2]; }
+    }).catch(function (e) { MON.err = errMsg(e); }).then(function () { MON.busy = false; if (S.mounted === "monitor") updMonitor(); monTimer(); });
+  }
+  function monTimer() { clearTimeout(MON.timer); if (S.mounted === "monitor" && MON.live && MON.rows.length <= 100) MON.timer = setTimeout(function () { monLoad(false); }, 30000); }
+  function monCell(k, r) {
+    var v = r[k];
+    if (v == null || v === "") return '<span class="tiny">–</span>';
+    var shown;
+    if (k === "t") return '<span class="mono">' + dayClock(v) + "</span>";
+    if (k === "sev") shown = chip({ 1: "kritisch", 2: "hoch", 3: "mittel", 4: "niedrig" }[v] || v, { 1: "bad", 2: "warn", 3: "", 4: "" }[v]);
+    else if (k === "action") shown = chip(v, /block|drop|reject/.test(v) ? "ok" : v === "allowed" ? "bad" : "");
+    else if (k === "src" || k === "dst") shown = esc(S.data && S.data.status && S.data.status.names && S.data.status.names[v] ? S.data.status.names[v] + " (" + v + ")" : v);
+    else if (k === "rid") shown = esc(MON.rules[v] || String(v).slice(0, 8) + "…");
+    else shown = esc(v);
+    var f = FILTERABLE[k]; if (!f) return shown;
+    return '<button class="lv" data-act="mon-f" data-k="' + (f === "port" ? "port" : k) + '" data-v="' + esc(v) + '" title="Als Filter">' + shown + "</button>";
+  }
+  function updMonitor() {
+    var el = $("#monBody"); if (!el) return;
+    var cols = LCOLS[MON.kind], s = MON.sum || { hist: [], top: {} };
+    $$("[data-act=mon-kind]").forEach(function (b) { b.classList.toggle("on", b.dataset.k === MON.kind); var c = MON.counts[b.dataset.k]; b.querySelector("i").textContent = c != null ? c.toLocaleString("de-DE") : ""; });
+    $$("[data-act=mon-range]").forEach(function (b) { b.classList.toggle("on", +b.dataset.r === MON.range); });
+    $("#monLive").classList.toggle("on", MON.live);
+    var chips = Object.keys(MON.f).map(function (k) { return '<button class="chip cy fchip" data-act="mon-unf" data-k="' + k + '">' + esc(LF[k] || k) + (MON.f[k].charAt(0) === "!" ? " ≠ " + esc(MON.f[k].slice(1)) : ": " + esc(MON.f[k])) + " ✕</button>"; }).join(" ");
+    slot("#monChips").innerHTML = chips ? chips + ' <button class="chip" data-act="mon-clear">Alle Filter weg</button>' : '<span class="tiny">Kein Filter. Tippe auf einen Wert in der Tabelle, um danach zu filtern.</span>';
+    var mx = Math.max.apply(null, s.hist.map(function (h) { return h.n; }).concat([1]));
+    var top = Object.keys(s.top || {}).map(function (k) {
+      var L = s.top[k] || []; if (!L.length) return "";
+      var m = Math.max.apply(null, L.map(function (x) { return x.n; }).concat([1])), fk = FILTERABLE[k] === "port" ? "port" : k;
+      return '<div class="card topl"><h3>' + esc({ src: "Häufigste Quellen", dst: "Häufigste Ziele", sig: "Häufigste Signaturen", host: "Häufigste Namen", dport: "Häufigste Ports", rid: "Häufigste Regeln", program: "Programme", action: "Aktion", sev: "Schwere" }[k] || k) + "</h3>" +
+        L.map(function (x) { var lab = k === "rid" ? (MON.rules[x.v] || String(x.v).slice(0, 8) + "…") : k === "sev" ? ({ 1: "kritisch", 2: "hoch", 3: "mittel", 4: "niedrig" }[x.v] || x.v) : (k === "src" || k === "dst") && S.data && S.data.status && S.data.status.names && S.data.status.names[x.v] ? S.data.status.names[x.v] : x.v;
+          return '<div class="tb" role="button" tabindex="0" data-act="mon-f" data-k="' + fk + '" data-v="' + esc(x.v) + '"><span>' + esc(lab) + '</span><i style="width:' + Math.round(x.n / m * 100) + '%"></i><b>' + x.n.toLocaleString("de-DE") + "</b></div>"; }).join("") + "</div>";
+    }).join("");
+    var head = "<tr>" + cols.map(function (c) { return "<th>" + esc(c[1]) + "</th>"; }).join("") + "<th></th></tr>";
+    var body = MON.rows.map(function (r) { return "<tr>" + cols.map(function (c) { return '<td data-c="' + c[0] + '">' + monCell(c[0], r) + "</td>"; }).join("") + '<td><button class="btn sm ghost" data-act="mon-row" data-id="' + r.id + '" aria-label="Details">›</button></td></tr>'; }).join("");
+    el.innerHTML = (MON.err ? '<div class="card bad"><h3>Abfrage nicht möglich</h3><p>' + esc(MON.err) + "</p></div>" : "") +
+      '<div class="card"><div class="row sp"><h3 style="margin:0">' + MON.total.toLocaleString("de-DE") + " Einträge · " + esc((RANGES.filter(function (x) { return x[0] === MON.range; })[0] || [0, ""])[1]) + '</h3><span class="tiny">je Balken ' + Math.round((s.step || 60) / 60) + ' min</span></div><div class="hist">' +
+      s.hist.map(function (h) { return '<i style="height:' + Math.max(2, Math.round(h.n / mx * 100)) + '%" title="' + esc(dayClock(h.b) + " · " + h.n) + '"></i>'; }).join("") + "</div></div>" +
+      '<div class="tops">' + top + "</div>" +
+      (MON.rows.length ? '<div class="card logs"><table class="lt">' + head + body + "</table></div>" : '<div class="card"><p class="muted">Keine Einträge für diesen Filter und Zeitraum.</p></div>') +
+      (MON.rows.length < MON.total ? '<div class="row" style="justify-content:center"><button class="btn sm" data-act="mon-more">Ältere laden (' + (MON.total - MON.rows.length).toLocaleString("de-DE") + ")</button></div>" : "");
+    $("#monCsv").href = "/api/logs/" + MON.kind + "/csv?" + monQuery();
+  }
+  function monDetail(id) {
+    api("GET", "/api/logs/" + MON.kind + "/entry/" + encodeURIComponent(id)).then(function (d) {
+      var pretty = d.raw; try { pretty = JSON.stringify(JSON.parse(d.raw), null, 2); } catch (e) { /* plain text */ }
+      var rows = Object.keys(d).filter(function (k) { return k !== "raw" && d[k] != null && d[k] !== ""; }).map(function (k) {
+        var f = FILTERABLE[k], key = f === "port" ? "port" : k;
+        return "<div><b>" + esc(LF[k] || k) + "</b><span>" + (k === "t" ? esc(dayClock(d[k])) : esc(k === "rid" ? (MON.rules[d[k]] || d[k]) : d[k])) +
+          (f ? ' <button class="chip cy" data-act="mon-f" data-k="' + key + '" data-v="' + esc(d[k]) + '">nur das</button> <button class="chip" data-act="mon-f" data-k="' + key + '" data-v="!' + esc(d[k]) + '">ohne</button>' : "") + "</span></div>";
+      }).join("");
+      sheet({ title: "Eintrag", html: '<div class="facts">' + rows + '</div><details><summary class="tiny">Rohdaten</summary><pre class="fp raw">' + esc(pretty) + "</pre></details>", cancel: "Schließen" });
+    }).catch(function (e) { toast(errMsg(e), true); });
+  }
+  function monSearch(v) { if (v) MON.f.q = v; else delete MON.f.q; monLoad(false); }
   function doThen(label, p, after) { return p.then(function () { toast(label); return refresh(); }).then(after || function () { }).catch(function (e) { toast(errMsg(e), true); }); }
   document.addEventListener("click", function (e) {
     var b = e.target.closest("[data-act]"); if (!b || !S.me && b.dataset.act !== "sheet-close") return;
@@ -446,6 +540,14 @@
     if (a === "chip") { var c = CHIPS[+b.dataset.i], ta = $("#taskText"); ta.value = c; ta.focus(); ta.setSelectionRange(c.length, c.length); return; }
     if (a === "mic") { dictate(); return; }
     if (a === "seg") { S.insightTab = b.dataset.t; updInsight(); return; }
+    if (a === "mon-kind") { MON.kind = b.dataset.k; MON.f = MON.f.q ? { q: MON.f.q } : {}; monSave(); monLoad(false); return; }
+    if (a === "mon-range") { MON.range = +b.dataset.r; monSave(); monLoad(false); return; }
+    if (a === "mon-f") { MON.f[b.dataset.k] = b.dataset.v; if (S.sheet) closeSheet(); monLoad(false); return; }
+    if (a === "mon-unf") { delete MON.f[b.dataset.k]; if (b.dataset.k === "q") $("#monQ").value = ""; monLoad(false); return; }
+    if (a === "mon-clear") { MON.f = {}; $("#monQ").value = ""; monLoad(false); return; }
+    if (a === "mon-more") { monLoad(true); return; }
+    if (a === "mon-live") { MON.live = !MON.live; updMonitor(); monTimer(); return; }
+    if (a === "mon-row") { monDetail(b.dataset.id); return; }
     if (a === "iseg") { INC.tab = b.dataset.t; INC.open = null; updIncidents(); return; }
     if (a === "inc-open") { INC.open = INC.open === b.dataset.id ? null : b.dataset.id; updIncidents(); return; }
     if (a === "inc-case") { doThen("Gespeichert", api("POST", "/api/incident/case", { ip: b.dataset.ip, status: b.dataset.st, until: +b.dataset.until }), loadIncidents); return; }

@@ -100,6 +100,10 @@ class Analyzer:
         self.con.execute("""CREATE TABLE IF NOT EXISTS eve (t DOUBLE, type VARCHAR, src VARCHAR, sport INTEGER, dst VARCHAR, dport INTEGER, proto VARCHAR,
                             host VARCHAR, sig VARCHAR, sev TINYINT, action VARCHAR, raw JSON)""")
         self.con.execute("CREATE TABLE IF NOT EXISTS sys (t DOUBLE, program VARCHAR, msg VARCHAR)")
+        from .logs import FW_SQL, parse_filterlog
+        self.con.execute(FW_SQL)
+        self.parse_fw = parse_filterlog
+        self.migrate()
         self.cert = own_cert(os.path.join(self.dir, 'tls')) if self.tls else None
 
     # ------------------------------------------------------------ receiving
@@ -184,7 +188,7 @@ class Analyzer:
 
     # ------------------------------------------------------------ writing
     def flush(self, lines):
-        eve, sysrows, bad = [], [], 0
+        eve, sysrows, fwrows, bad = [], [], [], 0
         for raw in lines:
             if raw.startswith(b'E '):
                 eve.append(raw[2:])
@@ -195,7 +199,11 @@ class Analyzer:
                         t = datetime.datetime.fromisoformat(p[0]).timestamp()
                     except ValueError:
                         t = time.time()
-                    sysrows.append((t, p[1][:64], p[2][:4000]))
+                    f = self.parse_fw(p[2]) if p[1] == 'filterlog' else None
+                    if f:
+                        fwrows.append((t, f['rid'], f['iface'], f['action'], f['dir'], f['ipv'], f['proto'], f['src'], f['sport'], f['dst'], f['dport'], f['len'], f['rulenr'], p[2][:2000]))
+                    else:
+                        sysrows.append((t, p[1][:64], p[2][:4000]))
                 else:
                     bad += 1
             else:
@@ -215,6 +223,9 @@ class Analyzer:
             if sysrows:
                 self.con.executemany('INSERT INTO sys VALUES (?, ?, ?)', sysrows)
                 written += len(sysrows)
+            if fwrows:
+                self.con.executemany('INSERT INTO fw VALUES (%s)' % ', '.join('?' * 14), fwrows)
+                written += len(fwrows)
         with self.lock:
             self.c['written'] += written
             self.c['bad'] += bad
@@ -246,20 +257,33 @@ class Analyzer:
         """retention: older than ANALYZER_DAYS goes; above ANALYZER_MAX_GB the oldest day goes until it fits (DuckDB reuses the freed space)"""
         now = now or time.time()
         with self.dblock:
-            for tb in ('eve', 'sys'):
+            for tb in ('eve', 'sys', 'fw'):
                 self.con.execute('DELETE FROM %s WHERE t < ?' % tb, [now - self.days * 86400])
             for _ in range(self.days):
                 if self.size() <= self.max_bytes:
                     break
-                oldest = self.con.execute('SELECT MIN(t) FROM (SELECT MIN(t) AS t FROM eve UNION ALL SELECT MIN(t) FROM sys)').fetchone()[0]
+                oldest = self.con.execute('SELECT MIN(t) FROM (SELECT MIN(t) AS t FROM eve UNION ALL SELECT MIN(t) FROM sys UNION ALL SELECT MIN(t) FROM fw)').fetchone()[0]
                 if oldest is None:
                     break
-                for tb in ('eve', 'sys'):
+                for tb in ('eve', 'sys', 'fw'):
                     self.con.execute('DELETE FROM %s WHERE t < ?' % tb, [oldest + 86400])
                 self.con.execute('CHECKPOINT')
                 if self.size() > self.max_bytes and self.con.execute('SELECT COUNT(*) FROM eve').fetchone()[0] == 0:
                     break
             self.con.execute('CHECKPOINT')
+
+    def migrate(self):
+        """firewall log lines kept as plain text by 1.2.0 are parsed into the table fw (once)"""
+        rows = self.con.execute("SELECT rowid, t, msg FROM sys WHERE program = 'filterlog'").fetchall()
+        out = []
+        for _, t, msg in rows:
+            f = self.parse_fw(msg)
+            if f:
+                out.append((t, f['rid'], f['iface'], f['action'], f['dir'], f['ipv'], f['proto'], f['src'], f['sport'], f['dst'], f['dport'], f['len'], f['rulenr'], msg[:2000]))
+        if out:
+            self.con.executemany('INSERT INTO fw VALUES (%s)' % ', '.join('?' * 14), out)
+        if rows:
+            self.con.execute("DELETE FROM sys WHERE program = 'filterlog'")
 
     def size(self):
         return sum(os.path.getsize(p) for p in (self.db_path, self.db_path + '.wal') if os.path.exists(p))
@@ -275,7 +299,7 @@ class Analyzer:
         with self.lock:
             c = dict(self.c, senders=dict(self.c['senders']))
         with self.dblock:
-            rows = {tb: self.con.execute('SELECT COUNT(*), MIN(t), MAX(t) FROM %s' % tb).fetchone() for tb in ('eve', 'sys')}
+            rows = {tb: self.con.execute('SELECT COUNT(*), MIN(t), MAX(t) FROM %s' % tb).fetchone() for tb in ('eve', 'sys', 'fw')}
         pem = self.cert_pem()
         return {'port': self.port, 'tls': self.tls, 'allow': [str(n) for n in self.allow], 'days': self.days, 'max_gb': round(self.max_bytes / 1024 ** 3, 1),
                 'bytes': self.size(), 'queue': self.q.qsize(), 'counters': c,

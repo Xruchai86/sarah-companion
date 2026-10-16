@@ -190,6 +190,8 @@ class FakeOpn:
             hit[0]['active'] = False
             hit[0]['undone'] = True
             return {'ok': True}
+        if cmd == 'rulemap':
+            return {'rules': dict(getattr(self, 'rulemap', {}))}
         if cmd == 'incidents':
             return copy.deepcopy(self.incidents)
         if cmd in ('icase', 'inote', 'ihand'):                   # the same rules as StatsController::sarahArgs (0.60)

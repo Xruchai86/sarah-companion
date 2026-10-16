@@ -55,7 +55,7 @@ def valid_ip(v):
 def check_command(cmd, value=''):
     """-> value to send, or raises OpnError. Mirrors the firewall's own input rules."""
     value = '' if value is None else str(value)
-    if cmd in ('analyze', 'tasks', 'inv', 'noaus', 'incidents'):
+    if cmd in ('analyze', 'tasks', 'inv', 'noaus', 'incidents', 'rulemap'):
         return ''
     if cmd in ('icase', 'inote', 'ihand'):                    # working on an incident: <ip>|<status>:<until> | <ip>|<note, base64url> | <ip>
         ip, sep, rest = value.partition('|')

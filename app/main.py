@@ -23,6 +23,7 @@ from .tls import TLS
 from .opn import Opn, OpnError, PinMismatch, fmt_fp
 from .store import Store
 from .analyzer import Analyzer
+from .logs import Logs, BadQuery
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 PUSH_HOSTS = ('fcm.googleapis.com', '.push.services.mozilla.com', '.push.apple.com', '.notify.windows.com', '.push.microsoft.com')
@@ -97,7 +98,9 @@ def create_app(env=None, start_poller=True):
     throttle = Throttle()
     allow_any_push = env.get('PUSH_ALLOW_ANY') == '1'                 # tests only
     analyzer = Analyzer(store.dir, env, default_allow=opn.host) if env.get('ANALYZER_PORT', '6514') != '0' else None
-    app.extensions['sarah'] = {'opn': opn, 'store': store, 'pusher': pusher, 'poller': poller, 'throttle': throttle, 'analyzer': analyzer}
+    logs = Logs(analyzer) if analyzer else None
+    rulemap = {'t': 0, 'v': {}}
+    app.extensions['sarah'] = {'opn': opn, 'store': store, 'pusher': pusher, 'poller': poller, 'throttle': throttle, 'analyzer': analyzer, 'logs': logs}
 
     def pw_ok(candidate):
         return hmac.compare_digest(hashlib.pbkdf2_hmac('sha256', (candidate or '').encode(), salt, 200_000), pwhash)
@@ -282,6 +285,55 @@ def create_app(env=None, start_poller=True):
         if g:
             return g
         return jsonify(analyzer.status() if analyzer else {'off': True})
+
+    # ------------------------------------------------------------ monitoring (Panorama / FortiAnalyzer style): logs with filters
+    def logs_call(fn):
+        g = guard(False)
+        if g:
+            return g
+        if not logs:
+            return err('Der Analyzer ist aus (ANALYZER_PORT=0).', 404)
+        try:
+            return fn()
+        except BadQuery as e:
+            return err(str(e))
+
+    @app.get('/api/logs/counts')
+    def logs_counts():
+        return logs_call(lambda: jsonify(logs.counts()))
+
+    @app.get('/api/logs/rules')
+    def logs_rules():
+        def run():
+            if time.time() - rulemap['t'] > 600:
+                try:
+                    rulemap['v'] = (opn.command('rulemap') or {}).get('rules') or {}
+                    rulemap['t'] = time.time()
+                except OpnError:
+                    pass                                                  # names are a help, not a must
+            return jsonify(rulemap['v'])
+        return logs_call(run)
+
+    @app.get('/api/logs/<kind>')
+    def logs_search(kind):
+        return logs_call(lambda: jsonify(logs.search(kind, request.args)))
+
+    @app.get('/api/logs/<kind>/summary')
+    def logs_summary(kind):
+        return logs_call(lambda: jsonify(logs.summary(kind, request.args)))
+
+    @app.get('/api/logs/<kind>/entry/<rid>')
+    def logs_entry(kind, rid):
+        return logs_call(lambda: jsonify(logs.detail(kind, rid)))
+
+    @app.get('/api/logs/<kind>/csv')
+    def logs_csv(kind):
+        def run():
+            body_ = logs.csv(kind, request.args)
+            r = app.response_class(body_, mimetype='text/csv; charset=utf-8')
+            r.headers['Content-Disposition'] = 'attachment; filename="sarah-%s-%s.csv"' % (kind, time.strftime('%Y%m%d-%H%M'))
+            return r
+        return logs_call(run)
 
     @app.post('/api/noaus')
     def noaus():

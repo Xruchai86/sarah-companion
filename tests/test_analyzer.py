@@ -65,14 +65,15 @@ def test_tls_receive_and_store(an):
     send(an, lines())
     wait(an, 5)
     st = an.status()
-    assert st['tables']['eve']['rows'] == 3 and st['tables']['sys']['rows'] == 2, st['tables']
+    assert st['tables']['eve']['rows'] == 3 and st['tables']['sys']['rows'] == 1 and st['tables']['fw']['rows'] == 1, st['tables']   # filterlog is parsed into fw (1.3.0)
     assert st['counters']['received'] == 7 and st['counters']['bad'] == 2 and st['counters']['senders'] == {'127.0.0.1': 7}
     with an.dblock:
         rows = an.con.execute("SELECT type, src, dport, host, sig, sev, action, t FROM eve ORDER BY t").fetchall()
         sysr = an.con.execute("SELECT program, msg FROM sys ORDER BY t").fetchall()
+        fwr = an.con.execute("SELECT action, src, dport FROM fw").fetchall()
     assert rows[0][:4] == ('tls', '192.168.1.20', 443, 'www.example.org') and rows[1][4:7] == ('ET MALWARE Possible C2 Beacon', 1, 'allowed') and rows[2][3] == 'pkg.example'
     assert abs(rows[0][7] - 1792127760.123456) < 0.001, 'eve time with offset +0200 is stored as UTC epoch'
-    assert sysr[0][0] == 'filterlog' and 'block' in sysr[0][1] and sysr[1][0] == 'audit'
+    assert fwr == [('block', '203.0.113.9', 22)] and sysr[0][0] == 'audit'
 
 
 def test_a_foreign_certificate_is_not_trusted_by_the_client(an):
