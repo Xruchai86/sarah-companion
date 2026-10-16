@@ -5,6 +5,7 @@ Die Web-App für die KI-Wächterin deiner Firewall. Auf dem Handy und am Desktop
 - **Kern** – derselbe Kern wie in OPNsense, mit Lage, Fakten und dem Verlauf der letzten Analysen. „Jetzt analysieren“ per Fingertipp.
 - **Aufträge** – gib ihr Aufgaben: *„Prüfe, warum das Gerät kamera-hof Probleme macht“*. Auch per Sprache. Sie antwortet mit dem, was sie in den Daten findet, und bietet Maßnahmen an, die **du** bestätigst.
 - **Befunde** – ihre Untersuchungen (was sie sich angesehen hat, Urteil, Plan) und ihre Verbesserungsvorschläge. Ein Gerät kannst du selbst untersuchen lassen.
+- **Vorfälle** – wie im DECK: Risikowert, Quellen, Zeitverlauf, „Warum dieser Wert“; Status setzen, Notizen, an S.A.R.A.H. übergeben. Eine Meldung über einen Vorfall öffnet direkt diese Ansicht.
 - **Aktionen** – was sie getan hat, mit Probezeit und **Veto**. Dazu der **Not-Aus**.
 - **Meldungen** – nach einem Scan, der nicht ruhig ist; bei einem Vorfall; wenn sie selbst gehandelt hat; wenn etwas auf dich wartet; wenn die Firewall nicht erreichbar ist. **Ein ruhiger Scan meldet sich nie.** Mit Ruhezeiten.
 
@@ -63,18 +64,111 @@ Beim **ersten Kontakt** merkt sich der Container den SHA-256-Fingerabdruck des Z
 
 Hat dein ACME-Client auf der OPNsense ein Zertifikat für einen Namen wie `sarah.deine-domain.de`, kann die App es direkt nutzen: Die Firewall lädt es nach jeder Erneuerung per SFTP in den Datenordner, die App merkt das von selbst. Dann laufen **Push-Meldungen und die Installation als App ohne Traefik**. Die App bekommt dafür **keinerlei zusätzliche Rechte** an der Firewall.
 
-1. **Unraid:** SSH einschalten (*Settings › Management Access › Use SSH*) und den Ordner `/mnt/user/appdata/sarah-companion/tls` anlegen.
-2. **OPNsense:** *Dienste › ACME Client › Automatisierungen* › **+**
-   - Typ: **Upload certificate via SFTP**
-   - Host: die IP deines Unraid-Servers, Port 22, Benutzer z. B. `root`
-   - Identität: z. B. `ed25519` - das Plugin erzeugt den Schlüssel und zeigt den öffentlichen Teil an. Den hinterlegst du bei diesem Benutzer auf Unraid als erlaubten SSH-Schlüssel (dauerhaft, je nach Unraid-Version in der Benutzerverwaltung oder unter `/boot/config/ssh`).
-   - Zielpfad: `/mnt/user/appdata/sarah-companion/tls`
-   - Gruppe (chgrp): `100` · Rechte Zertifikat: `0640` · Rechte Schlüssel: `0640` - der Container läuft als Benutzer 99 / Gruppe 100 und muss den Schlüssel lesen können.
-3. Die Automatisierung beim Zertifikat eintragen (*Zertifikate › bearbeiten › Automatisierungen*) und einmal *Ausstellen/Erneuern* klicken.
-4. **DNS:** Der Name muss auf die App zeigen, z. B. als Host-Override in Unbound: `sarah.deine-domain.de` → `192.168.1.231`.
-5. Aufrufen: `https://sarah.deine-domain.de:8085`
+Auf Unraid bekommt dafür der Benutzer `smb` **nur SFTP** und sieht **nur den Zertifikatsordner** (abgeschottet, nur mit dem Schlüssel der Firewall). Sonst könnte jemand, der die Firewall übernimmt, mit diesem Schlüssel alle Shares lesen. Die Schritte gelten für Unraid 7 (geprüft an einer echten Installation, siehe „Wenn es klemmt“).
 
-Was die App dabei tut: Sie sucht `fullchain.pem` (sonst `cert.pem`) und `key.pem` im Ordner oder im Unterordner, den das Plugin anlegt. Ein Zertifikat wird nur genommen, wenn der Schlüssel passt und es gültig ist. Eine Erneuerung übernimmt sie im laufenden Betrieb, ohne Neustart. Ein kaputter oder halber Upload ersetzt nie ein funktionierendes Zertifikat. Den Zustand (Name, gültig bis, Aussteller, Fehler) zeigt *Mehr › HTTPS dieser App*. Ohne Zertifikat läuft sie wie bisher über HTTP.
+### 1. OPNsense: Automatisierung anlegen
+
+*Dienste › ACME Client › Automatisierungen › +*, oben links **„Erweiterter Modus“** einschalten.
+
+| Feld | Wert |
+|---|---|
+| Befehl ausführen | Lade das Zertifikat via SFTP hoch |
+| SFTP-Host / Port | IP von Unraid / `22` |
+| Benutzername | `smb` |
+| Identitätstyp | `ECDSA` (oder `ed25519`) |
+| Remote-Pfad | `/tls` (der abgeschottete Ordner, siehe unten) |
+| Gruppe (chgrp) | `100` |
+| Rechte Zertifikat / Schlüssel | `0640` / `0640` |
+| Host-Schlüssel | leer lassen |
+
+Speichern, dann **„Identität anzeigen“** klicken. Der Schlüssel erscheint im Kasten oben bei „Erforderliche Parameter“. Kopiere die **ganze Zeile** inklusive `restrict,command=…,from=…` am Anfang: Das Plugin schränkt den Schlüssel damit selbst ein.
+
+Gruppe `100` und `0640` sind wichtig: Der Container läuft als Benutzer 99 / Gruppe 100 und muss den Schlüssel lesen können.
+
+### 2. Unraid: einmalig per Shell
+
+SSH einschalten (*Settings › Management Access › Use SSH*), dann:
+
+**Schlüssel ablegen.** Kein `nano` verwenden, das bricht die lange Zeile um:
+```
+cat > /boot/config/ssh/smb.pub <<'EOF'
+HIER DIE GANZE ZEILE AUS OPNSENSE
+EOF
+```
+
+**SSH-Zusatz für `smb`:**
+```
+cat > /boot/config/ssh/smb-sftp.conf <<'EOF'
+# SFTP only for smb: certificate upload from the OPNsense ACME client
+Match User smb
+    AuthorizedKeysFile /etc/sftp-keys/%u
+    ChrootDirectory /var/sftp/smb
+    ForceCommand internal-sftp -d /tls
+    PasswordAuthentication no
+    AllowTcpForwarding no
+    X11Forwarding no
+    PermitTTY no
+EOF
+```
+
+### 3. Unraid: Startskript
+
+Unraid läuft aus dem Arbeitsspeicher, `/etc` ist nach jedem Neustart wieder leer. Deshalb das Plugin **User Scripts**: neues Skript, Zeitplan **„At Startup of Array“** (vorher gibt es `/mnt/user` nicht):
+
+```
+#!/bin/bash
+# SFTP for smb: only the certificate folder, only with the firewall's key
+SRC=/mnt/user/appdata/sarah-companion/tls
+CFG=/etc/ssh/sshd_config
+KEYS=/etc/sftp-keys                       # NOT under /etc/ssh: Unraid makes everything there 600 on restart
+KEY=/boot/config/ssh/smb.pub
+[ -s "$KEY" ] || { echo "Kein Schlüssel für smb gefunden"; exit 1; }
+
+mkdir -p "$SRC" /var/sftp/smb/tls "$KEYS"
+chown nobody:users "$SRC" && chmod 775 "$SRC"
+chown root:root /var/sftp /var/sftp/smb "$KEYS" && chmod 755 /var/sftp /var/sftp/smb "$KEYS"
+mountpoint -q /var/sftp/smb/tls || mount --bind "$SRC" /var/sftp/smb/tls
+install -o root -g root -m 644 "$KEY" "$KEYS/smb"
+
+cp "$CFG" "$CFG.vorher"
+grep -qE '^AllowUsers.*\bsmb\b' "$CFG" || sed -i 's/^AllowUsers root$/AllowUsers root smb/' "$CFG"
+grep -q '^Match User smb' "$CFG" || { echo; cat /boot/config/ssh/smb-sftp.conf; } >> "$CFG"
+
+if sshd -t; then
+    /etc/rc.d/rc.sshd restart && echo "SFTP für smb bereit"
+else
+    cp "$CFG.vorher" "$CFG"; echo "Fehler in der SSH-Einstellung - alten Zustand wiederhergestellt"
+fi
+```
+
+Einmal **„Run Script“** ausführen: Es muss „SFTP für smb bereit“ melden. Ist die neue SSH-Einstellung fehlerhaft, stellt das Skript die alte wieder her, **bevor** SSH neu startet, dein Zugang als `root` geht also nie verloren.
+
+### 4. Testen
+
+OPNsense: **„Verbindung testen“** (macht eine echte Probe mit Hochladen und Löschen), erwartet „Connection and upload test succeeded“. Dann die Automatisierung beim Zertifikat eintragen (*Zertifikate › bearbeiten › Automatisierungen*) und einmal **Erneuern** klicken. Danach liegen auf Unraid `fullchain.pem` und `key.pem` unter `/mnt/user/appdata/sarah-companion/tls/<name>/`.
+
+### 5. DNS und Aufruf
+
+Ein Host-Override in Unbound: `sarah.deine-domain.de` → IP des Containers. Die App findet das Zertifikat innerhalb einer Minute und schaltet auf HTTPS um: `https://sarah.deine-domain.de:8085`. *Mehr › HTTPS dieser App* zeigt Name, gültig bis und Aussteller.
+
+### Wenn es klemmt
+
+```
+grep -i "sshd" /var/log/syslog | tail -n 6
+```
+
+| Meldung | Ursache und Abhilfe |
+|---|---|
+| `Failed publickey for smb` | Schlüsselzeile umgebrochen oder unvollständig: Datei per `cat <<'EOF'` neu schreiben und das Skript erneut ausführen. `wc -l /etc/sftp-keys/smb` muss `1` zeigen, `ssh-keygen -lf /etc/sftp-keys/smb` den Fingerabdruck, den auch das Protokoll nennt |
+| `Failed publickey` trotz richtiger Datei | Ordner mit dem Schlüssel nicht lesbar für `smb` (`ls -ld /etc/sftp-keys` muss `drwxr-xr-x` zeigen). Der Schlüssel darf **nicht** unter `/etc/ssh/` liegen: Unraid setzt dort beim SSH-Start alles auf `600` |
+| `not allowed because not listed in AllowUsers` | Das Skript lief nicht: „Run Script“ |
+| `bad ownership or modes for chroot directory` | `/var/sftp` oder `/var/sftp/smb` gehört nicht `root` mit `755`: Skript erneut ausführen |
+| App zeigt „nicht lesbar“ | Gruppe `100` und Rechte `0640` in der Automatisierung fehlen |
+| Mehrere Fehlversuche hintereinander | SSH bremst die Firewall danach 5 Sekunden aus: kurz warten |
+
+Wirksame Einstellungen für `smb` zeigt: `sshd -T -C user=smb,host=x,addr=1.2.3.4 | grep -iE "chroot|forcecommand|authorizedkeysfile"`.
+
+**Alternative: HTTPS über einen Proxy.** Siehe den nächsten Abschnitt.
 
 ## 3b. HTTPS über einen Proxy (Traefik o. Ä.) (nötig für Push und „App installieren“)
 
@@ -111,6 +205,22 @@ Willst du sie nicht ins Internet stellen: Erreichbar nur im Heimnetz oder über 
 
 Beim ersten Start meldet sie nichts Altes (nur ab jetzt). In den **Ruhezeiten** kommt nur ein Alarm durch; alles andere wartet und kommt als **eine** Sammelmeldung. Auf dem Startbildschirm zeigt die App die Zahl der wartenden Vorschläge als Zähler am Symbol (wo das Gerät es kann).
 
+## 5b. Analyzer: die Protokolle der Firewall (ab 1.2.0, Plugin ab 0.60)
+
+Damit die OPNsense nicht selbst auswerten muss, schickt sie ihre Protokolle hierher: Suricata (Alarme, TLS, HTTP), das Firewall-Protokoll und
+Anmeldungen. Gesendet wird von **syslog-ng der OPNsense** (kein Python, kaum Last), verschlüsselt mit TLS, gespeichert in DuckDB unter `/data/analyzer`.
+
+1. Port **6514** am Container freigeben (Unraid-Vorlage: „Analyzer-Port“).
+2. In der App unter **Mehr › Analyzer** das Zertifikat aufklappen und kopieren (der Container stellt es beim ersten Start selbst aus).
+3. In OPNsense **DECK › Einstellungen › Analyzer**: Adresse des Unraid-Servers, Port 6514, TLS, das Zertifikat einfügen, speichern.
+4. Unter **Mehr › Analyzer** steigen „empfangen“ und „geschrieben“. In OPNsense zeigt der Reiter, was übergeben, wartend und verworfen ist.
+
+- Senden darf nur die Firewall aus `OPNSENSE_URL` (oder wer in `ANALYZER_ALLOW` steht).
+- Die Firewall vertraut **genau diesem** Zertifikat; ein anderes lehnt sie ab.
+- Aufbewahrung: `ANALYZER_DAYS` (30 Tage) und `ANALYZER_MAX_GB` (20 GB), die ältesten Tage gehen zuerst.
+- Ist der Container weg, puffert die Firewall bis zu 100 MB auf ihrer Platte und liefert nach.
+- `ANALYZER_PORT=0` schaltet den Analyzer ab.
+
 ## 6. Sicherheit
 
 Weil der Container den Schlüssel hält, ist die Oberfläche das Ziel. Deshalb:
@@ -145,7 +255,9 @@ python tools/make_icons.py                           # nur nach Änderungen am K
 .venv/bin/python tests/devserver.py &                # dann: python tests/e2e.py <Protokolldatei>   (Browser-Test, Playwright)
 ```
 
-Geprüft: Zertifikat-Merken und -Ablehnen gegen eine nachgebaute Firewall (echtes TLS), jede Eingabeprüfung, alle Meldungsfälle als reine Funktion, **echter Web Push mit VAPID, verschlüsselt und im Test wie vom Browser entschlüsselt**, die komplette Oberfläche in Chromium (Handy- und Desktop-Maße, Ausfälle, Offline-Start, Zertifikatswechsel, Skript-Einschleusung durch Modelltext).
+Im DECK-Repository läuft die Reihe mit `python test/run_all.py --companion`; sie nimmt `SCDECK_COMPANION_PY` oder `~/sarah-venv` (WSL).
+
+Geprüft: Analyzer-Empfang über TLS mit echter DuckDB (Absender-Prüfung, zu lange Zeilen, volle Warteschlange, Aufbewahrung nach Tagen und Größe), Vorfälle mit allen Eingabeprüfungen, Zertifikat-Merken und -Ablehnen gegen eine nachgebaute Firewall (echtes TLS), jede Eingabeprüfung, alle Meldungsfälle als reine Funktion, **echter Web Push mit VAPID, verschlüsselt und im Test wie vom Browser entschlüsselt**, die komplette Oberfläche in Chromium (Handy- und Desktop-Maße, Ausfälle, Offline-Start, Zertifikatswechsel, Skript-Einschleusung durch Modelltext).
 
 ## 9. Ehrliche Grenzen
 

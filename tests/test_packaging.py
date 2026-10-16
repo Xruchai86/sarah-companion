@@ -42,8 +42,9 @@ def test_the_template_urls_are_raw_urls_of_files_that_exist_in_this_repo():
 def test_every_variable_of_the_template_is_read_by_the_app_and_the_required_ones_are_there():
     t = template()
     variables = {c.get('Target'): c for c in t.findall('Config') if c.get('Type') == 'Variable'}
-    src = read('app', 'main.py') + read('app', '__main__.py')
+    src = read('app', 'main.py') + read('app', '__main__.py') + read('app', 'analyzer.py')
     used = set(re.findall(r"env(?:\.get\(|\[)'([A-Z_]+)'", src)) | {'PORT'}
+    used |= set(re.findall(r"env\.get\('([A-Z_]+)'", read('app', 'analyzer.py')))
     used |= set(re.findall(r'environ\.get\("([A-Z_]+)"', read('app', 'tls.py')))
     assert set(variables) <= used, 'the template offers a setting the app ignores: %s' % (set(variables) - used)
     for need in ('OPNSENSE_URL', 'OPNSENSE_KEY', 'OPNSENSE_SECRET', 'UI_PASSWORD'):

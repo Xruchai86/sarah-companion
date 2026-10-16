@@ -7,10 +7,10 @@
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 
   var TASKS_ON = false;   // Aufträge per Text: abgeschaltet (zusammen mit TASKS_ON in os-scdeck scripts/scdeck/sarah.py)
-  var VIEWS = [["core", "Kern"], ["tasks", "Aufträge"], ["insight", "Befunde"], ["actions", "Aktionen"], ["more", "Mehr"]].filter(function (v) { return TASKS_ON || v[0] !== "tasks"; });
+  var VIEWS = [["core", "Kern"], ["incidents", "Vorfälle"], ["tasks", "Aufträge"], ["insight", "Befunde"], ["actions", "Aktionen"], ["more", "Mehr"]].filter(function (v) { return TASKS_ON || v[0] !== "tasks"; });
   var ICON = {
     core: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>',
-    tasks: '<path d="M4 5h16v11H9l-5 4z"/>', insight: '<circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/>',
+    tasks: '<path d="M4 5h16v11H9l-5 4z"/>', incidents: '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17v.5"/>', insight: '<circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/>',
     actions: '<path d="M13 2L5 14h6l-1 8 8-12h-6z"/>', more: '<path d="M4 7h16M4 12h16M4 17h16"/>'
   };
   var LEVEL = { calm: ["RUHIG", "ok"], watch: ["BEOBACHTEN", "warn"], alert: ["ALARM", "bad"] };
@@ -110,6 +110,7 @@
     },
     insight: function () { return '<div class="row" style="margin-bottom:12px"><div class="seg"><button data-act="seg" data-t="inv">Untersuchungen</button><button data-act="seg" data-t="imp">Verbessern</button></div></div><div id="insBody"></div>'; },
     actions: function () { return '<div id="actTop"></div><div class="card" id="actLog"></div><div class="danger"><div class="lbl" style="color:var(--bad)">Not-Aus</div><p class="muted" style="margin:8px 0 12px">Hebt alle aktiven Eingriffe von S.A.R.A.H. auf und schaltet alle Fähigkeiten aus. Sie bleibt im Modus „Beobachten“.</p><button class="btn bad" data-act="noaus">Not-Aus …</button></div>'; },
+    incidents: function () { return '<div class="row" style="margin-bottom:12px"><div class="seg"><button data-act="iseg" data-t="live">Aktuell</button><button data-act="iseg" data-t="done">Erledigt</button></div><span class="tiny" id="incTs"></span></div><div id="incBody"></div>'; },
     more: function () { return '<div id="moreBody"></div>'; }
   };
   var mounted = {};
@@ -120,7 +121,8 @@
     $$("[data-act=go]").forEach(function (b) { b.classList.toggle("on", b.dataset.v === v); });
     if (v === "core") mountCore();
     if (v === "tasks") { loadTasks(); var mic = $("#mic"); if (mic && (window.SpeechRecognition || window.webkitSpeechRecognition)) mic.hidden = false; }
-    if (v === "more") refreshPush();
+    if (v === "more") { refreshPush(); loadAn(); }
+    if (v === "incidents") loadIncidents();
     window.scrollTo(0, 0);
   }
   function unmountView() { if (S.mounted === "core" && S.core) S.core.pause(true); if (S.rec) { try { S.rec.stop(); } catch (e) { /* not running */ } } }
@@ -345,6 +347,7 @@
       '<div class="set"><span>Animation anhalten<small>Spart Akku</small></span><label class="sw"><input type="checkbox" data-ui="calm"' + (UI.calm ? " checked" : "") + ' aria-label="Animation anhalten"><i></i></label></div>' +
       '<div class="set"><span>Vibrieren bei Alarm<small>Wenn die App offen ist</small></span><label class="sw"><input type="checkbox" data-ui="vib"' + (UI.vib ? " checked" : "") + ' aria-label="Vibrieren bei Alarm"><i></i></label></div>' +
       '<div class="set"><span class="tiny">S.A.R.A.H. Companion ' + esc(d.version) + '</span><button class="btn sm ghost" data-act="logout">Abmelden</button></div></div>';
+    html += anCard();
     setHtml(el, html);
   }
 
@@ -366,6 +369,63 @@
   document.addEventListener("visibilitychange", function () { if (S.me && !document.hidden) { tick(); if (S.mounted === "tasks") loadTasks(); } });
 
   // ---------------------------------------------------------------- clicks
+  /* ---- Vorfälle: the same incidents and the same work on them as on the DECK page of the firewall */
+  var SRCN = { radar: "Radar", suricata: "Suricata", dns: "DNS", lernmodus: "Lernmodus", fernzugriff: "Fernzugriff", tls: "TLS", beacon: "Beaconing", l7: "Anwendungen", dnstunnel: "DNS-Tunnel",
+    intel: "Threat-Intel", zenarmor: "Zenarmor", lan: "LAN-Wächter" };
+  var CASEN = [["new", "Neu"], ["progress", "In Bearbeitung"], ["done", "Erledigt"], ["false", "Fehlalarm"]];
+  var INC = { d: null, tab: "live", open: null, t: 0, timer: null };
+  function loadIncidents() {
+    return api("GET", "/api/incidents").then(function (j) { INC.d = j.result || {}; INC.t = nowS(); if (S.mounted === "incidents") updIncidents(); })
+      .catch(function (e) { slot("#incBody").innerHTML = '<div class="card bad"><h3>Vorfälle nicht abrufbar</h3><p>' + esc(errMsg(e)) + "</p></div>"; })
+      .then(function () { clearTimeout(INC.timer); if (S.mounted === "incidents") INC.timer = setTimeout(loadIncidents, 60000); });
+  }
+  function incState(i) { return i.state === "open" ? ["OFFEN", "bad"] : i.state === "done" ? ["ERLEDIGT", "ok"] : ["BEOBACHTEN", "warn"]; }
+  function updIncidents() {
+    $$("[data-act=iseg]").forEach(function (b) { b.classList.toggle("on", b.dataset.t === INC.tab); });
+    var d = INC.d || {}, L = (d.incidents || []).filter(function (i) { return INC.tab === "done" ? i.state === "done" : i.state !== "done"; }), k = d.kpi || {};
+    slot("#incTs").innerHTML = INC.t ? " Stand " + clock(INC.t) : "";
+    if (!L.length) { slot("#incBody").innerHTML = '<div class="card ok"><h3>' + (INC.tab === "done" ? "Nichts erledigt" : "Keine Vorfälle") + "</h3><p>" + (INC.tab === "done" ? "In den letzten 24 Stunden wurde kein Vorfall erledigt." : "In den letzten 24 Stunden fällt kein Gerät in mehreren Quellen zugleich auf.") + "</p></div>"; return; }
+    var head = INC.tab === "live" ? '<div class="facts" style="margin-bottom:12px"><div><b>Offen</b><span>' + (k.open || 0) + "</span></div><div><b>Beobachtet</b><span>" + (k.watch || 0) + "</span></div><div><b>Höchster Wert</b><span>" + (k.max || 0) + "/100</span></div></div>" : "";
+    slot("#incBody").innerHTML = head + L.map(function (i) {
+      var s = incState(i), c = i.case || {}, open = INC.open === i.id;
+      var h = '<div class="card ' + s[1] + '" data-inc="' + esc(i.id) + '"><div class="row" data-act="inc-open" data-id="' + esc(i.id) + '" style="cursor:pointer"><b style="font-size:20px;min-width:52px">' + i.score + '</b><div style="flex:1"><b>' + esc(who(i.ip)) + '</b><div class="tiny">seit ' + dayClock(i.start) + " · " + i.signals.length + (i.more ? "+" : "") + " Indizien</div></div>" + chip(s[0], s[1]) + "</div>" +
+        '<div style="margin-top:8px">' + i.sources.map(function (x) { return chip(SRCN[x] || x, "cy"); }).join(" ") + (c.status && c.status !== "new" ? " " + chip((CASEN.filter(function (z) { return z[0] === c.status; })[0] || [0, c.status])[1], "vi") : "") + "</div>";
+      if (open) {
+        h += '<h3 style="margin-top:14px">Zeitverlauf</h3>' + i.signals.map(function (x) { return '<div class="item"><span class="tiny">' + clock(x.t) + " · " + esc(SRCN[x.src] || x.src) + "</span><b>" + esc(x.title) + '</b><div class="tiny">' + esc(x.detail || "") + "</div></div>"; }).join("") +
+          "<h3>Warum dieser Wert?</h3>" + i.contrib.map(function (x) { return '<div class="row tiny"><span style="flex:1">' + esc(SRCN[x.src] || x.src) + "</span><b>+" + x.pts + "</b></div>"; }).join("") + (i.ctx ? '<div class="row tiny"><span style="flex:1">Neues Gerät</span><b>+' + i.ctx + "</b></div>" : "") +
+          '<h3>Bearbeitung</h3><div class="seg" style="flex-wrap:wrap">' + CASEN.map(function (z) { return '<button data-act="inc-case" data-ip="' + esc(i.ip) + '" data-st="' + z[0] + '" data-until="' + i.ack_until + '" class="' + ((c.status || "new") === z[0] ? "on" : "") + '">' + z[1] + "</button>"; }).join("") + "</div>" +
+          (c.by ? '<div class="tiny" style="margin-top:6px">zuletzt: ' + esc(c.by === "du" ? "Du" : c.by) + " · " + ago(c.at) + "</div>" : "") +
+          (c.status === "false" ? '<p class="tiny">Als Fehlalarm markiert: die beteiligten Quellen zählen bei diesem Gerät künftig weniger.</p>' : "") +
+          "<h3>S.A.R.A.H.</h3>" + incSarah(i) +
+          "<h3>Notizen</h3>" + (c.notes || []).map(function (n) { return '<div class="item"><span class="tiny">' + dayClock(n.t) + " · " + esc(n.who === "du" ? "Du" : n.who) + "</span><div>" + esc(n.text) + "</div></div>"; }).join("") +
+          '<textarea id="incNote" maxlength="1000" rows="2" placeholder="Notiz zum Vorfall …"></textarea><div class="row" style="margin-top:8px"><button class="btn sm" data-act="inc-note" data-ip="' + esc(i.ip) + '">Notiz speichern</button></div>';
+      }
+      return h + "</div>";
+    }).join("");
+  }
+  function incSarah(i) {
+    var s = (i.case || {}).sarah || {};
+    if (s.pending) return '<p class="muted">Untersucht gerade …</p>';
+    if (s.item) {
+      var it = s.item;
+      return "<p><b>" + esc(it.urteil || "") + "</b> " + esc(it.begruendung || "") + "</p>" + (it.plan || []).map(function (p) {
+        return '<div class="item"><b>' + esc(p.aktion) + '</b><div class="tiny">' + esc(p.warum || "") + "</div>" + (p.status === "vorschlag" && p.link ? '<button class="btn ok sm" data-act="inv-do" data-id="' + esc(p.link) + '" data-l="' + esc(p.aktion) + '">Ausführen …</button>' : "") + "</div>"; }).join("");
+    }
+    return '<p class="muted">Sie untersucht das Gerät mit diesem Vorfall als Anlass (nur lesend) und schlägt vor, was zu tun ist. Ausgeführt wird nur, was du bestätigst.</p><button class="btn sm" data-act="inc-hand" data-ip="' + esc(i.ip) + '">An S.A.R.A.H. übergeben</button>';
+  }
+  /* ---- Analyzer: the firewall's logs arrive here (os-scdeck 0.60+, DECK › Einstellungen › Analyzer) */
+  function loadAn() { api("GET", "/api/analyzer").then(function (j) { S.an = j; if (S.mounted === "more") updMore(); }).catch(function () { /* shown as missing */ }); }
+  function anCard() {
+    var a = S.an; if (!a) return "";
+    if (a.off) return '<div class="card"><h3>Analyzer</h3><p class="tiny">Aus (ANALYZER_PORT=0).</p></div>';
+    var c = a.counters || {}, e = (a.tables || {}).eve || {}, sy = (a.tables || {}).sys || {}, gb = function (b) { return (b / 1073741824).toFixed(b > 1073741824 ? 1 : 2) + " GB"; };
+    var live = c.last && nowS() - c.last < 300;
+    return '<div class="card' + (c.refused && !c.received ? " warn" : "") + '"><h3>Analyzer · Protokolle der Firewall</h3><div class="row sp"><b class="mono">Port ' + esc(a.port) + " · " + (a.tls ? "TLS" : "TCP") + "</b>" + (live ? chip("empfängt", "ok") : chip(c.received ? "ruhig" : "wartet", c.received ? "" : "warn")) + "</div>" +
+      '<div class="facts" style="margin-top:10px"><div><b>Suricata</b><span>' + (e.rows || 0).toLocaleString("de-DE") + '</span></div><div><b>System</b><span>' + (sy.rows || 0).toLocaleString("de-DE") + '</span></div><div><b>Speicher</b><span>' + gb(a.bytes || 0) + " / " + esc(a.max_gb) + ' GB</span></div><div><b>Aufbewahrung</b><span>' + esc(a.days) + " Tage</span></div></div>" +
+      '<p class="tiny" style="margin-top:8px">Empfangen ' + (c.received || 0) + " · geschrieben " + (c.written || 0) + " · verworfen " + ((c.dropped_queue || 0) + (c.dropped_long || 0)) + " · unlesbar " + (c.bad || 0) + " · abgewiesen " + (c.refused || 0) + " · zuletzt " + esc(c.last ? ago(c.last) : "nie") + "</p>" +
+      '<p class="tiny">Erlaubte Absender: ' + esc((a.allow || []).join(", ") || "keiner") + "</p>" +
+      (a.cert ? '<details><summary>Zertifikat für die Firewall (DECK › Einstellungen › Analyzer)</summary><pre class="fp">' + esc(a.cert) + '</pre><div class="tiny">SHA-256 ' + esc(a.cert_sha256) + "</div></details>" : "") + "</div>";
+  }
   function doThen(label, p, after) { return p.then(function () { toast(label); return refresh(); }).then(after || function () { }).catch(function (e) { toast(errMsg(e), true); }); }
   document.addEventListener("click", function (e) {
     var b = e.target.closest("[data-act]"); if (!b || !S.me && b.dataset.act !== "sheet-close") return;
@@ -386,6 +446,11 @@
     if (a === "chip") { var c = CHIPS[+b.dataset.i], ta = $("#taskText"); ta.value = c; ta.focus(); ta.setSelectionRange(c.length, c.length); return; }
     if (a === "mic") { dictate(); return; }
     if (a === "seg") { S.insightTab = b.dataset.t; updInsight(); return; }
+    if (a === "iseg") { INC.tab = b.dataset.t; INC.open = null; updIncidents(); return; }
+    if (a === "inc-open") { INC.open = INC.open === b.dataset.id ? null : b.dataset.id; updIncidents(); return; }
+    if (a === "inc-case") { doThen("Gespeichert", api("POST", "/api/incident/case", { ip: b.dataset.ip, status: b.dataset.st, until: +b.dataset.until }), loadIncidents); return; }
+    if (a === "inc-hand") { b.disabled = true; doThen("An S.A.R.A.H. übergeben", api("POST", "/api/incident/handover", { ip: b.dataset.ip }), loadIncidents); return; }
+    if (a === "inc-note") { var nt = ($("#incNote") || {}).value || ""; if (!nt.trim()) return; doThen("Notiz gespeichert", api("POST", "/api/incident/note", { ip: b.dataset.ip, text: nt.trim() }), loadIncidents); return; }
     if (a === "inv-now") { var ip = $("#invIp").value.trim(); if (!ip) { $("#invIp").focus(); return; } doThen("Untersuchung eingeplant", api("POST", "/api/inv/now", { ip: ip }), function () { $("#invIp").value = ""; S.fastUntil = Date.now() + 300000; }); return; }
     if (a === "imp-ask") { var im = st().improve[+b.dataset.i]; location.hash = "#tasks"; setTimeout(function () { var t2 = $("#taskText"); if (t2) { t2.value = "Erkläre mir und prüfe: " + im.title; t2.focus(); } }, 50); return; }
     if (a === "release") { var rid = b.dataset.id; sheet({ title: b.textContent.trim() === "Veto" ? "Veto einlegen?" : "Rückgängig machen?", html: "<p><b>" + esc(b.dataset.l) + "</b></p><p class=\"muted\">Die Änderung wird zurückgenommen.</p>", ok: "Ja, zurücknehmen", danger: true,

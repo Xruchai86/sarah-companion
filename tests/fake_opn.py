@@ -57,6 +57,14 @@ class FakeOpn:
         self.inv = {'items': [], 'queue': [], 'running': None, 'today': 0, 'max_day': 6, 'next': ''}
         self.tasks, self.calls, self.next_id = [], [], 1
         self.mode = None                                     # None | 'drop' (close the connection) | '403' | '500' | 'html'
+        now = int(time.time())
+        # shaped like incidents.cached() of os-scdeck 0.60 (keys the app reads)
+        self.incidents = {'now': now, 'kpi': {'open': 1, 'watch': 0, 'done': 0, 'max': 62}, 'sources': {'suricata': True, 'dns': True}, 'gap': 900, 'open_min': 40, 'watch_min': 25,
+                          'incidents': [{'id': '192.168.1.90@%d' % (now - 1800), 'ip': '192.168.1.90', 'state': 'open', 'score': 62, 'start': now - 1800, 'end': now - 600,
+                                         'sources': ['suricata', 'beacon'], 'contrib': [{'src': 'suricata', 'pts': 40}, {'src': 'beacon', 'pts': 22}], 'ctx': 0, 'new': False,
+                                         'signals': [{'t': now - 1800, 'src': 'suricata', 'title': 'ET MALWARE Possible C2 Beacon', 'detail': 'Schwere 1 · durchgelassen, nur Alarm · 185.66.66.66:443'},
+                                                     {'t': now - 900, 'src': 'beacon', 'title': 'Regelmäßiger Kontakt alle 300 s', 'detail': '185.66.66.66:443'}],
+                                         'more': 0, 'ack_until': now - 600, 'case': {'status': 'new', 'notes': []}}]}
         self.next_scan = {'level': 'watch', 'summary': 'Ein Gerät fragt DNS an der Firewall vorbei.'}
         self.task_answer = {'answer': 'Das Gerät hat in den letzten 24 Stunden 12 Verbindungen zu einem neuen Land aufgebaut.', 'actions': []}
         self.lock = threading.Lock()
@@ -182,6 +190,29 @@ class FakeOpn:
             hit[0]['active'] = False
             hit[0]['undone'] = True
             return {'ok': True}
+        if cmd == 'incidents':
+            return copy.deepcopy(self.incidents)
+        if cmd in ('icase', 'inote', 'ihand'):                   # the same rules as StatsController::sarahArgs (0.60)
+            ip, _, rest = value.partition('|')
+            if not re.fullmatch(r'[0-9a-fA-F.:]{3,45}', ip):
+                return {'error': 'invalid address'}
+            inc = [i for i in self.incidents['incidents'] if i['ip'] == ip]
+            if cmd == 'icase':
+                if not re.fullmatch(r'(new|progress|done|false):\d{1,12}', rest):
+                    return {'error': 'invalid parameters'}
+                if inc:
+                    inc[0]['case'].update(status=rest.split(':')[0], by='du', at=now)
+                    inc[0]['state'] = 'done' if rest.split(':')[0] in ('done', 'false') else 'open'
+            elif cmd == 'inote':
+                if not re.fullmatch(r'[A-Za-z0-9_-]{1,1400}={0,2}', rest):
+                    return {'error': 'invalid parameters'}
+                if inc:
+                    inc[0]['case']['notes'].append({'t': now, 'who': 'du', 'text': base64.urlsafe_b64decode(rest + '=' * (-len(rest) % 4)).decode()})
+            else:
+                if not inc:
+                    return {'error': 'no incident for this device'}
+                inc[0]['case'].update(status='progress', by='S.A.R.A.H.', sarah={'pending': True})
+            return copy.deepcopy(self.incidents)
         if cmd == 'noaus':
             for e in self.status['act']['actions']:
                 e['active'] = False

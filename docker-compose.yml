@@ -8,6 +8,7 @@ services:
     user: "99:100"                      # Unraid: nobody:users. Elsewhere use your own uid:gid that owns ./data
     ports:
       - "8085:8080"
+      - "6514:6514"                     # Analyzer: logs of the firewall (TLS)
     volumes:
       - ./data:/data
     environment:
@@ -21,6 +22,10 @@ services:
       # NTFY_URL: "http://ntfy:80"                  # optional: also send to a self-hosted ntfy
       # NTFY_TOPIC: "sarah"
       # NTFY_TOKEN: ""
+      # ANALYZER_ALLOW: "192.168.1.1"               # who may send logs (default: the firewall of OPNSENSE_URL)
+      # ANALYZER_DAYS: "30"                         # keep logs this many days
+      # ANALYZER_MAX_GB: "20"                       # and at most this much disk
+      # ANALYZER_PORT: "0"                          # 0 = no Analyzer
       # OPNSENSE_VERIFY: "pin"                      # pin (default, self-signed ok) | system (certificate from a real CA)
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"]

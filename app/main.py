@@ -3,6 +3,7 @@
 Threat model in short: the container holds the firewall's key, so whoever gets into this UI can use it. Hence: a password (hashed, rate limited),
 a session cookie (HttpOnly, SameSite=Strict, Secure on https), a header every state-changing call must carry (cross-site forms cannot send it),
 a fixed command list instead of a proxy, strict headers (CSP), and a push subscription may only point to the known push services (no SSRF)."""
+import base64
 import hashlib
 import hmac
 import ipaddress
@@ -21,6 +22,7 @@ from .notify import Poller, Pusher
 from .tls import TLS
 from .opn import Opn, OpnError, PinMismatch, fmt_fp
 from .store import Store
+from .analyzer import Analyzer
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 PUSH_HOSTS = ('fcm.googleapis.com', '.push.services.mozilla.com', '.push.apple.com', '.notify.windows.com', '.push.microsoft.com')
@@ -94,7 +96,8 @@ def create_app(env=None, start_poller=True):
     pwhash = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt, 200_000)
     throttle = Throttle()
     allow_any_push = env.get('PUSH_ALLOW_ANY') == '1'                 # tests only
-    app.extensions['sarah'] = {'opn': opn, 'store': store, 'pusher': pusher, 'poller': poller, 'throttle': throttle}
+    analyzer = Analyzer(store.dir, env, default_allow=opn.host) if env.get('ANALYZER_PORT', '6514') != '0' else None
+    app.extensions['sarah'] = {'opn': opn, 'store': store, 'pusher': pusher, 'poller': poller, 'throttle': throttle, 'analyzer': analyzer}
 
     def pw_ok(candidate):
         return hmac.compare_digest(hashlib.pbkdf2_hmac('sha256', (candidate or '').encode(), salt, 200_000), pwhash)
@@ -239,6 +242,47 @@ def create_app(env=None, start_poller=True):
     def release():
         return simple('release', 'id')
 
+    # ------------------------------------------------------------ incidents (same work on them as on the DECK page)
+    @app.get('/api/incidents')
+    def incidents():
+        g = guard(False)
+        return g or fw('incidents')
+
+    @app.post('/api/incident/case')
+    def incident_case():
+        g = guard(True)
+        if g:
+            return g
+        b = body()
+        return fw('icase', '%s|%s:%s' % (b.get('ip', ''), b.get('status', ''), b.get('until', '')))
+
+    @app.post('/api/incident/note')
+    def incident_note():
+        g = guard(True)
+        if g:
+            return g
+        b = body()
+        text = str(b.get('text', '')).strip()
+        if not text or len(text) > 1000:
+            return err('Eine Notiz braucht 1 bis 1000 Zeichen.')
+        enc = base64.urlsafe_b64encode(text.encode('utf-8')).decode().rstrip('=')
+        return fw('inote', '%s|%s' % (b.get('ip', ''), enc))
+
+    @app.post('/api/incident/handover')
+    def incident_handover():
+        g = guard(True)
+        if g:
+            return g
+        return fw('ihand', str(body().get('ip', '')))
+
+    # ------------------------------------------------------------ analyzer (logs of the firewall)
+    @app.get('/api/analyzer')
+    def analyzer_status():
+        g = guard(False)
+        if g:
+            return g
+        return jsonify(analyzer.status() if analyzer else {'off': True})
+
     @app.post('/api/noaus')
     def noaus():
         g = guard(True)
@@ -334,4 +378,6 @@ def create_app(env=None, start_poller=True):
 
     if start_poller:
         poller.start()
+        if analyzer:
+            analyzer.start()
     return app

@@ -115,7 +115,7 @@ def decide(seen, st, inv, prefs, now, error=None, error_kind=None):
     # ------------------------------------------------------------ 2. an incident opens
     inc = bool(st.get('open_incident'))
     if inc and not seen.get('incident') and not first and ev.get('incident', True):
-        notes.append(note('incident', 'alert', 'Offener Vorfall', 'Mehrere Quellen belasten dasselbe Gerät. Details in der App.', 'core', 'incident'))
+        notes.append(note('incident', 'alert', 'Offener Vorfall', 'Mehrere Quellen belasten dasselbe Gerät. Details in der App.', 'incidents', 'incident'))
     seen['incident'] = inc
 
     # ------------------------------------------------------------ 3. she acted on her own

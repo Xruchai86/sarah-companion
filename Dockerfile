@@ -23,6 +23,8 @@ COPY app ./app
 USER sarah
 VOLUME /data
 EXPOSE 8080
+# Analyzer: the firewall's logs (syslog over TLS, DECK > Einstellungen > Analyzer)
+EXPOSE 6514
 # HTTPS when a certificate is in /data/tls, otherwise HTTP: app/healthcheck.py tries both
 HEALTHCHECK --interval=30s --timeout=8s --start-period=10s --retries=3 CMD ["python", "-m", "app.healthcheck"]
 CMD ["python", "-m", "app"]
