@@ -7,15 +7,16 @@
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 
   var TASKS_ON = false;   // Aufträge per Text: abgeschaltet (zusammen mit TASKS_ON in os-scdeck scripts/scdeck/sarah.py)
-  var VIEWS = [["core", "Kern"], ["incidents", "Vorfälle"], ["monitor", "Monitor"], ["tasks", "Aufträge"], ["insight", "Befunde"], ["actions", "Aktionen"], ["more", "Mehr"]].filter(function (v) { return TASKS_ON || v[0] !== "tasks"; });
+  var VIEWS = [["core", "Kern"], ["incidents", "Vorfälle"], ["monitor", "Monitor"], ["protect", "Schutz"], ["tasks", "Aufträge"], ["insight", "Befunde"], ["actions", "Aktionen"], ["more", "Mehr"]].filter(function (v) { return TASKS_ON || v[0] !== "tasks"; });
   var ICON = {
     core: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>',
     tasks: '<path d="M4 5h16v11H9l-5 4z"/>', incidents: '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17v.5"/>', monitor: '<path d="M3 20h18M6 16V9M10 16V5M14 16v-6M18 16V8"/>', insight: '<circle cx="11" cy="11" r="6"/><path d="M16 16l5 5"/>',
+    protect: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
     actions: '<path d="M13 2L5 14h6l-1 8 8-12h-6z"/>', more: '<path d="M4 7h16M4 12h16M4 17h16"/>'
   };
   var LEVEL = { calm: ["RUHIG", "ok"], watch: ["BEOBACHTEN", "warn"], alert: ["ALARM", "bad"] };
   var ACT = { isolate: "Isoliert", rule_off: "Regel aus", zone_expect: "Zonen gelernt", dns: "DNS-Härtung", policy: "Richtlinie", shaper: "Traffic-Shaping", release: "Aufgehoben",
-    dismiss: "Abgelehnt", dry: "Nur gemeldet", pol_test: "Testmodus", noaus: "Not-Aus" };
+    dismiss: "Abgelehnt", dry: "Nur gemeldet", pol_test: "Testmodus", noaus: "Not-Aus", protect: "Schutzprofil", idspol: "Suricata-Policies", divert: "Divert" };
   var CAPS = [["a_iso", "Geräte isolieren"], ["a_zone", "Zonen lernen"], ["a_rule", "Regeln abschalten"], ["a_dns", "DNS-Härtung"], ["a_pol", "Geräte-Richtlinien"], ["a_shp", "Traffic-Shaping"], ["a_inv", "Selbst untersuchen"]];
   var CAPV = { off: "aus", dry: "nur melden", on: "automatisch" };
   var MODES = { observe: "Beobachten", propose: "Vorschlagen", auto: "Autonom" };
@@ -118,6 +119,8 @@
         '<div class="seg" id="appView" hidden><button data-act="app-view" data-v="dev">Je Gerät</button><button data-act="app-view" data-v="raw">Rohdaten</button></div>' +
         '<button class="btn sm ghost" id="monLive" data-act="mon-live">Live</button><a class="btn sm ghost" id="monCsv" href="#" download>CSV</a></div><div class="row" id="monChips" style="margin:8px 0 12px"></div><div id="monBody"></div>';
     },
+    protect: function () { return '<div class="row" style="margin-bottom:12px"><div class="seg" id="prSeg"><button data-act="pr-tab" data-t="zones">Zonen</button><button data-act="pr-tab" data-t="profile">Profile</button>' +
+      '<button data-act="pr-tab" data-t="divert">Divert</button><button data-act="pr-tab" data-t="ids">Policies</button></div><span class="tiny" id="prTs"></span></div><div id="prBody"></div>'; },
     more: function () { return '<div id="moreBody"></div>'; }
   };
   var mounted = {};
@@ -130,6 +133,7 @@
     if (v === "tasks") { loadTasks(); var mic = $("#mic"); if (mic && (window.SpeechRecognition || window.webkitSpeechRecognition)) mic.hidden = false; }
     if (v === "more") { refreshPush(); loadAn(); }
     if (v === "incidents") loadIncidents();
+    if (v === "protect") { updProtect(); loadProtect(); }
     $("#view").classList.toggle("wide", v === "monitor");
     if (v === "monitor") {
       monLoad(false); if (MON.kind === "app") loadApps(); api("GET", "/api/logs/rules").then(function (r) { MON.rules = r || {}; if (S.mounted === "monitor") updMonitor(); }).catch(function () { /* names are a help */ });
@@ -137,7 +141,7 @@
     }
     window.scrollTo(0, 0);
   }
-  function unmountView() { if (S.mounted === "core" && S.core) S.core.pause(true); if (S.rec) { try { S.rec.stop(); } catch (e) { /* not running */ } } }
+  function unmountView() { clearTimeout(PR.timer); if (S.mounted === "core" && S.core) S.core.pause(true); if (S.rec) { try { S.rec.stop(); } catch (e) { /* not running */ } } }
 
   function mountCore() {
     if (!window.SarahCore) return;
@@ -157,7 +161,7 @@
     var props = waiting().length;
     $$("[data-badge=core]").forEach(function (b) { b.hidden = !props; b.textContent = props; });
     if (navigator.setAppBadge) { (props ? navigator.setAppBadge(props) : navigator.clearAppBadge()).catch(function () { /* not allowed */ }); }
-    var u = { core: updCore, tasks: updTasks, insight: updInsight, actions: updActions, more: updMore }[S.mounted];
+    var u = { core: updCore, tasks: updTasks, insight: updInsight, actions: updActions, more: updMore, protect: updProtect }[S.mounted];
     if (u) u();
   }
   function waiting() { var a = st() && st().act; return a && a.proposals ? a.proposals : []; }
@@ -455,7 +459,7 @@
   };
   var LF = { src: "Quelle", dst: "Ziel", port: "Port", action: "Aktion", sev: "Schwere", proto: "Protokoll", iface: "Schnittstelle", host: "Name", rid: "Regel", program: "Programm", sig: "Signatur", type: "Art", dir: "Richtung", version: "TLS", q: "Text" };
   var FILTERABLE = { sev: 1, action: 1, src: 1, dst: 1, dport: "port", sport: "port", sig: 1, host: 1, type: 1, dir: 1, iface: 1, proto: 1, rid: 1, program: 1, version: 1 };
-  var RANGES = [[3600, "1 h"], [86400, "24 h"], [7 * 86400, "7 Tage"], [30 * 86400, "30 Tage"]];
+  var RANGES = [[3600, "1 h"], [86400, "24 h"], [7 * 86400, "7 Tage"], [30 * 86400, "30 Tage"], [90 * 86400, "90 Tage"], [365 * 86400, "1 Jahr"]];
   var MON = { kind: "threat", range: 86400, f: {}, rows: [], total: 0, offset: 0, sum: null, counts: {}, rules: {}, live: true, timer: null, busy: false };
   (function () { try { var x = JSON.parse(localStorage.getItem("sarah.mon") || "{}"); if (x.kind) MON.kind = x.kind; if (x.range) MON.range = x.range; } catch (e) { /* private mode */ } })();
   function monSave() { try { localStorage.setItem("sarah.mon", JSON.stringify({ kind: MON.kind, range: MON.range })); } catch (e) { /* private mode */ } }
@@ -470,7 +474,7 @@
     var jobs = [api("GET", base + "?" + monQuery({ offset: off, limit: 100 }))];
     if (!more) jobs.push(api("GET", base + "/summary?" + monQuery()), api("GET", "/api/logs/counts"));
     Promise.all(jobs).then(function (r) {
-      MON.rows = more ? MON.rows.concat(r[0].rows) : r[0].rows; MON.total = r[0].total; MON.err = null;
+      MON.rows = more ? MON.rows.concat(r[0].rows) : r[0].rows; MON.total = r[0].total; MON.clamped = !!r[0].clamped; MON.err = null;
       if (!more) { MON.sum = r[1]; MON.counts = r[2]; }
     }).catch(function (e) { MON.err = errMsg(e); }).then(function () { MON.busy = false; if (S.mounted === "monitor") updMonitor(); monTimer(); });
   }
@@ -513,7 +517,8 @@
     var head = "<tr>" + cols.map(function (c) { return "<th>" + esc(c[1]) + "</th>"; }).join("") + "<th></th></tr>";
     var body = MON.rows.map(function (r) { return "<tr>" + cols.map(function (c) { return '<td data-c="' + c[0] + '">' + monCell(c[0], r) + "</td>"; }).join("") + '<td><button class="btn sm ghost" data-act="mon-row" data-id="' + r.id + '" aria-label="Details">›</button></td></tr>'; }).join("");
     el.innerHTML = (MON.err ? '<div class="card bad"><h3>Abfrage nicht möglich</h3><p>' + esc(MON.err) + "</p></div>" : "") +
-      '<div class="card"><div class="row sp"><h3 style="margin:0">' + MON.total.toLocaleString("de-DE") + " Einträge · " + esc((RANGES.filter(function (x) { return x[0] === MON.range; })[0] || [0, ""])[1]) + '</h3><span class="tiny">je Balken ' + Math.round((s.step || 60) / 60) + ' min</span></div><div class="hist">' +
+      '<div class="card"><div class="row sp"><h3 style="margin:0">' + s.hist.reduce(function (a, h) { return a + h.n; }, 0).toLocaleString("de-DE") + " Einträge · " + esc((RANGES.filter(function (x) { return x[0] === MON.range; })[0] || [0, ""])[1]) + '</h3><span class="tiny">je Balken ' + ((s.step || 60) >= 3600 ? Math.round(s.step / 3600) + " h" : Math.round((s.step || 60) / 60) + " min") + (s.hourly ? " · aus Stundenwerten" : "") + "</span></div>" +
+      (s.note ? '<p class="tiny">' + esc(s.note) + "</p>" : "") + (MON.clamped ? '<p class="tiny">Die Liste zeigt die letzten 90 Tage (' + MON.total.toLocaleString("de-DE") + " Einzelzeilen) - die Übersicht den ganzen Zeitraum.</p>" : "") + '<div class="hist">' +
       s.hist.map(function (h) { return '<i style="height:' + Math.max(2, Math.round(h.n / mx * 100)) + '%" title="' + esc(dayClock(h.b) + " · " + h.n) + '"></i>'; }).join("") + "</div></div>" +
       '<div class="tops">' + top + "</div>" +
       (MON.rows.length ? '<div class="card logs"><table class="lt">' + head + body + "</table></div>" : '<div class="card"><p class="muted">Keine Einträge für diesen Filter und Zeitraum.</p></div>') +
@@ -528,7 +533,7 @@
         return "<div><b>" + esc(LF[k] || k) + "</b><span>" + (k === "t" ? esc(dayClock(d[k])) : esc(k === "rid" ? (MON.rules[d[k]] || d[k]) : d[k])) +
           (f ? ' <button class="chip cy" data-act="mon-f" data-k="' + key + '" data-v="' + esc(d[k]) + '">nur das</button> <button class="chip" data-act="mon-f" data-k="' + key + '" data-v="!' + esc(d[k]) + '">ohne</button>' : "") + "</span></div>";
       }).join("");
-      sheet({ title: "Eintrag", html: '<div class="facts">' + rows + '</div><details><summary class="tiny">Rohdaten</summary><pre class="fp raw">' + esc(pretty) + "</pre></details>", cancel: "Schließen" });
+      sheet({ title: "Eintrag", html: '<div class="facts">' + rows + '</div>' + (d.raw ? '<details><summary class="tiny">Rohdaten</summary><pre class="fp raw">' + esc(pretty) + "</pre></details>" : '<p class="tiny">Rohdaten werden nur für die letzten Tage aufbewahrt - alle Felder oben bleiben erhalten.</p>'), cancel: "Schließen" });
     }).catch(function (e) { toast(errMsg(e), true); });
   }
   /* applications per device: the firewall's App-ID (Zenarmor per device, Suricata behind NAT mapped to the device) - the raw Suricata lines of the
@@ -555,6 +560,214 @@
           ((dt.zapps || []).length ? '<p class="tiny">Zenarmor erkennt: ' + dt.zapps.slice(0, 25).map(function (z) { return esc(z.name) + " ×" + z.n; }).join(", ") + "</p>" : "") +
           (dt.detail || []).slice(0, 30).map(function (x) { var a = byId[x.app] || { name: x.app }; return '<div class="item"><b>' + esc(a.name) + "</b> " + (a.risk >= 2 ? chip(RK[a.risk], "warn") : "") + '<div class="tiny">' + esc(x.host) + " · " + x.n + " Verbindungen · zuletzt " + esc(ago(x.last)) + "</div></div>"; }).join("")) + "</td></tr>";
       }).join("") + "</table></div>" : '<div class="card"><p class="muted">' + esc(d.hint || "Noch kein Gerät erkannt.") + "</p></div>");
+  }
+  /* ---- Schutz: DECK › Schutzprofile of the firewall (os-scdeck 0.79+). The view and the previews are the firewall's (/api/scdeck/stats/protect);
+     applying goes through S.A.R.A.H. (do prf:/sup:/dvt:, release) - the firewall checks everything again (mode, memory, Divert state). */
+  var PRL = [["basis", "Basis"], ["standard", "Standard"], ["streng", "Streng"]];
+  var PRLTXT = { basis: "Bedrohungs-Listen (HaGeZi TIF, ThreatFox), Umleitung von Port 53", standard: "dazu HaGeZi PRO (Werbung, Tracking, Schadsoftware), Betrug, Schadsoftware-Hoster; DoT gesperrt",
+    streng: "PRO++ statt PRO, dazu Umgehung (DoH/VPN/TOR/Proxy), dynamisches DNS, Glücksspiel; DoH gesperrt" };
+  var PRTYPES = { hgz011: "Bedrohungen (HaGeZi TIF)", hgz012: "Bedrohungen (HaGeZi TIF Medium)", atf: "Abuse.ch ThreatFox", hgz003: "HaGeZi PRO (Werbung, Tracking, Schadsoftware)", hgz005: "HaGeZi PRO++ (strenger)",
+    hgz009: "Betrug und Fälschungen", hgz017: "Schadsoftware-Hoster", hgz014: "Umgehung: DoH, VPN, TOR, Proxy", hgz016: "dynamisches DNS", hgz019: "Glücksspiel" };
+  var PRSTEPS = { rdr: "Umleitung von Port 53 auf den eigenen Resolver", dot: "DNS über TLS (Port 853) sperren", doh: "bekannte DoH-Resolver sperren (Port 443)", dohcore: "DoH-Resolver mit IPv6 sperren" };
+  var PRCOLS = [["threat", "Bedrohungen"], ["web", "Web-/DNS-Filter"], ["app", "Anwendungen"], ["dns", "DNS-Durchsetzung"], ["intel", "IP-Sperre"]];
+  var PRBY = { zenarmor: "Zenarmor", suricata: "Suricata", unbound: "Unbound-Liste", pf: "Firewall-Regel", l7: "nur Erkennung" };
+  var PRST = { ok: ["OK", "ok"], gap: ["LÜCKE", "bad"], missing: ["FEHLT", "warn"], info: ["HINWEIS", ""], zen: ["ZENARMOR", "cy"] };
+  var PRGOALS = { reputation: "Bekannte Angreifer-Adressen", malware: "Malware und C2", exploit: "Exploits", phishing: "Phishing und Betrug", tor: "Anonymisierung (Tor)" };
+  var PRSUP = { basis: "Verwerfen: bekannte Angreifer-Adressen; Malware, Exploits, Phishing mit Schwere kritisch/hoch und hohem Vertrauen", standard: "wie Basis, dazu Regeln mit mittlerem Vertrauen",
+    streng: "wie Standard, dazu Schwere „gering“ und Tor-Knoten" };
+  var PR = { d: null, err: null, t: 0, tab: "zones", zone: "", level: "standard", plan: null, slevel: "standard", splan: null, busy: false, msg: {}, timer: null };
+  (function () { try { var x = JSON.parse(localStorage.getItem("sarah.pr") || "{}"); if (x.tab) PR.tab = x.tab; } catch (e) { /* private mode */ } })();
+  function prSave() { try { localStorage.setItem("sarah.pr", JSON.stringify({ tab: PR.tab })); } catch (e) { /* private mode */ } }
+  function loadProtect() {
+    return api("GET", "/api/protect").then(function (j) { PR.d = j.result || {}; PR.err = null; PR.t = nowS(); })
+      .catch(function (e) { if (e.kind !== "login") PR.err = errMsg(e); })
+      .then(function () {
+        if (S.mounted !== "protect") return;
+        updProtect(); clearTimeout(PR.timer);
+        var d = PR.d || {}, ip = d.idspol || {}, dv = d.divert || {};
+        var busy = (ip.entry_t && !(ip.reload && ip.reload.done >= ip.entry_t)) || dv.state === "pending";   // loading rules / waiting Divert: look again sooner
+        PR.timer = setTimeout(loadProtect, busy ? 15000 : 60000);
+      });
+  }
+  function prLevel(l) { return (PRL.filter(function (x) { return x[0] === l; })[0] || ["", l || "?"])[1]; }
+  function prZoneName(k) { var c = ((PR.d || {}).choose || []).filter(function (x) { return x.key === k; })[0]; return c ? c.name : k; }
+  function prModeOk() { var c = st() && st().config; return !c || c.mode === "propose" || c.mode === "auto"; }
+  function prModeHint() { return prModeOk() ? "" : '<p class="warnline">Umsetzen geht nur, wenn S.A.R.A.H. im Modus „Vorschlagen“ oder „Autonom“ ist (Einstellungen › S.A.R.A.H. in der Firewall). Ansehen geht immer.</p>'; }
+  function prMsg(k) { return PR.msg[k] ? '<p class="warnline" data-prmsg="' + k + '">' + esc(PR.msg[k]) + "</p>" : ""; }
+  function prFind(tag, cls, title, text, attr) { return '<div class="item"' + (attr || "") + "><div>" + chip(tag, cls) + " <b>" + esc(title) + "</b></div>" + (text ? '<div class="muted" style="font-size:13.5px;margin-top:4px">' + text + "</div>" : "") + "</div>"; }
+  function updProtect() {
+    $$("[data-act=pr-tab]").forEach(function (b) { b.classList.toggle("on", b.dataset.t === PR.tab); });
+    slot("#prTs").innerHTML = PR.t ? " Stand " + clock(PR.t) : "";
+    var el = $("#prBody"); if (!el) return;
+    if (el.contains(document.activeElement) && document.activeElement.tagName === "SELECT") return;     // an open list keeps its place
+    if (!PR.d) { setHtml(el, PR.err ? '<div class="card bad"><h3>Schutz nicht abrufbar</h3><p>' + esc(PR.err) + "</p></div>" : '<div class="card"><p class="muted">Lade …</p></div>'); return; }
+    var h = PR.err ? '<div class="banner">' + esc(PR.err) + " Angezeigt wird der letzte Stand.</div>" : "";
+    h += { zones: prZones, profile: prProfile, divert: prDivert, ids: prIds }[PR.tab]();
+    setHtml(el, h);
+    if (PR.tab === "profile" && (!PR.plan || PR.plan.zone !== PR.zone || PR.plan.level !== PR.level)) prLoadPlan();
+    if (PR.tab === "ids" && (!PR.splan || PR.splan.level !== PR.slevel)) prLoadIds();
+  }
+  function prZones() {
+    var d = PR.d, zs = d.zones || [], c = d.counts || {};
+    var mode = { A: "nur Suricata", B: "Suricata am WAN, Zenarmor innen", mixed: "gemischt" }[d.mode] || d.mode;
+    var h = '<div class="card"><h3>Übersicht</h3><div class="facts"><div><b>Betriebsart</b><span>' + esc(mode) + ((d.zenarmor || {}).installed ? " · Zenarmor erkannt" : " · ohne Zenarmor") + "</span></div>" +
+      "<div><b>Zonen</b><span>" + esc(c.zones || 0) + "</span></div><div><b>Mit Lücke</b><span>" + (c.gaps ? chip(c.gaps, "bad") : "0") + "</span></div><div><b>Doppelt</b><span>" + (c.double ? chip(c.double, "warn") : "0") + "</span></div>" +
+      "<div><b>Perimeter</b><span>" + esc((d.uplinks || []).map(function (u) { return u.name + ": " + (u.perimeter ? "Suricata bewacht" + ((d.suricata || {}).ips ? " (sperrt)" : " (meldet nur)") : "nicht bewacht"); }).join(" · ") || "kein WAN erkannt") + "</span></div></div></div>";
+    h += zs.length ? zs.map(function (z) {
+      var b = z.blocks || {}, bad = (z.gaps || []).length;
+      var rows = PRCOLS.map(function (col) {
+        var v = b[col[0]] || {}, s = PRST[v.state] || [v.state, ""], by = v.by ? PRBY[v.by] || v.by : "–", ex = "";
+        if (col[0] === "web" && v.by === "unbound") ex = " · " + (v.scope === "zone" ? "eigene Liste" : "Liste für alle") + ((v.lists || []).length ? " (" + v.lists.map(function (t) { return PRTYPES[t] || t; }).join(", ") + ")" : "");
+        if (col[0] === "web" && v.by === "zenarmor" && (v.unbound || []).length) ex = " + Unbound-Liste " + v.unbound.join(", ");
+        if (col[0] === "threat" && v.by === "suricata") ex = v.ips ? " · sperrt (IPS)" : " · meldet nur";
+        if (col[0] === "dns" && v.steps) ex = " · " + (["rdr", "dot", "doh"].filter(function (x) { return v.steps[x]; }).map(function (x) { return { rdr: "Umleitung", dot: "DoT", doh: "DoH" }[x]; }).join(", ") || "nichts");
+        return '<div data-cell="' + col[0] + '" data-state="' + esc(v.state) + '"><b>' + esc(col[1]) + "</b><span>" + chip(s[0], s[1]) + " " + esc(by + ex) + "</span></div>";
+      }).join("");
+      var notes = (z.gaps || []).indexOf("zen_missing") >= 0 ? '<p class="warnline">Zenarmor läuft, schützt aber diese Zone nicht (Schnittstelle fehlt in Zenarmor).</p>' : "";
+      (z.double || []).forEach(function () { notes += '<p class="warnline">Zenarmor und Suricata überwachen dieselbe Zone: eines genügt (CPU, doppelte Meldungen).</p>'; });
+      if ((z.notes || []).indexOf("trunk") >= 0) notes += '<p class="tiny">Trunk: Zenarmor schützt die VLANs, nur das native Netz nicht.</p>';
+      if ((z.notes || []).indexOf("unbound_extra") >= 0) notes += '<p class="tiny">Eine Unbound-Liste sperrt hier zusätzlich zu Zenarmor (zweite Schicht).</p>';
+      var ap = ((d.applied || {})[z.key] || []).map(function (a) { return chip("Profil " + prLevel(a.level), "ok"); }).join(" ");
+      return '<div class="card ' + (bad ? "bad" : "ok") + '" data-zone="' + esc(z.key) + '"><div class="row sp"><b>' + esc(z.name) + "</b><span>" + (z.zenarmor ? chip("Zenarmor", "cy") + " " : "") + (z.suricata ? chip("Suricata", "cy") + " " : "") + ap + "</span></div>" +
+        '<div class="tiny" style="margin:4px 0 8px">' + esc((z.nets || []).join(", ") || "kein Netz bekannt") + '</div><div class="facts">' + rows + "</div>" + notes + "</div>";
+    }).join("") : '<div class="card"><p class="muted">Keine inneren Zonen erkannt.</p></div>';
+    if (zs.some(function (z) { return z.zenarmor; })) h += '<p class="tiny" style="margin:-4px 0 12px">„ZENARMOR“: zuständig ist Zenarmor. Ob seine Richtlinie Sicherheit und Web-Filter einschaltet, zeigt das DECK in OPNsense (Zenarmor-Schnittstelle, für die App nicht freigegeben).</p>';
+    var bl = d.dnsbl_all || d.dnsbl || [];
+    h += '<div class="card" data-unbound><h3>Unbound-Blocklisten · ' + bl.length + "</h3>" + (bl.length ? bl.map(function (x) {
+      return '<div class="item"><div class="row sp"><b>' + esc(x.descr || "(ohne Beschreibung)") + "</b>" + chip(x.enabled ? "an" : "aus", x.enabled ? "ok" : "") + '</div><div class="tiny">' +
+        esc((x.types || []).map(function (t) { return PRTYPES[t] || t; }).join(", ") || "keine Listen-Typen") + (x.own_lists ? " · " + x.own_lists + " eigene URL(s)" : "") + " · gilt für " + esc((x.source_nets || []).length ? x.source_nets.join(", ") : "alle Netze") + "</div></div>";
+    }).join("") : '<p class="muted">Keine Unbound-Blockliste.</p>') + '<p class="tiny" style="margin-top:8px">Neue Listen und Stufen legt ein Schutzprofil an (Reiter „Profile“), mit Speicherprüfung vor dem Umsetzen.</p></div>';
+    h += '<div class="card" data-choose><h3>Betrachtete Schnittstellen</h3><p class="tiny">Abgewählte Schnittstellen erscheinen nicht in der Übersicht (z. B. ein Trunk ohne eigene Geräte).</p>' + (d.choose || []).map(function (c) {
+      return '<div class="set"><span>' + esc(c.name) + (c.uplink ? " (WAN)" : "") + "<small>" + esc(c.dev || c.key) + '</small></span><label class="sw"><input type="checkbox" data-pskip="' + esc(c.key) + '"' + (c.skip ? "" : " checked") + ' aria-label="' + esc(c.name) + '"><i></i></label></div>';
+    }).join("") + prMsg("sel") + "</div>";
+    return h;
+  }
+  function prChange(c) {
+    if (c.kind === "dnsbl_off") return prFind("AUS", "warn", "Deine Unbound-Liste(n) abschalten", esc((c.names || []).join(" · ")) + " - ihr Inhalt steckt geklont in der Stufen-Liste; „Rückgängig“ schaltet sie wieder ein.", ' data-change="dnsbl_off"');
+    if (c.kind === "dnsbl_move") return prFind("WECHSEL", "", "Zone verlässt " + c.name, esc((c.nets || []).join(", ")) + ((c.rest || []).length ? "" : " - die Liste ist danach leer und wird abgeschaltet"), ' data-change="dnsbl_move"');
+    if (c.kind === "dnsbl_level") {
+      var bits = [];
+      if ((c.add_types || []).length) bits.push("dazu: " + c.add_types.map(function (t) { return PRTYPES[t] || t; }).join(", "));
+      if (c.allow) bits.push(c.allow + " Ausnahme(n)"); if (c.block) bits.push(c.block + " eigene Sperr-Domain(s)"); if (c.urls) bits.push(c.urls + " eigene Listen-URL(s)"); if (c.wild) bits.push(c.wild + " Wildcard(s)");
+      return prFind(c.list ? "ERGÄNZT" : "NEU", "cy", (c.name || "") + " · " + (c.nets || []).join(", "), ((c.from || []).length ? "geklont aus: " + esc(c.from.join(" · ")) + (bits.length ? " · " : "") : "") + esc(bits.join(" · ")), ' data-change="dnsbl_level"');
+    }
+    return prFind("NEU", "cy", "DNS-Regel", esc(PRSTEPS[c.step] || c.step), ' data-change="' + esc(c.step) + '"');
+  }
+  function prProfile() {
+    var d = PR.d, zs = d.zones || [];
+    if (!PR.zone || !zs.some(function (z) { return z.key === PR.zone; })) PR.zone = zs.length ? zs[0].key : "";
+    if (!PR.zone) return '<div class="card"><p class="muted">Keine Zone.</p></div>';
+    var h = '<div class="card"><h3>Schutzprofil umsetzen</h3><div class="row" style="flex-wrap:nowrap"><select id="prZone" aria-label="Zone">' + zs.map(function (z) { return '<option value="' + esc(z.key) + '"' + (z.key === PR.zone ? " selected" : "") + ">" + esc(z.name) + "</option>"; }).join("") + "</select></div>" +
+      '<div class="seg" style="margin-top:10px">' + PRL.map(function (l) { return '<button data-act="pr-level" data-l="' + l[0] + '" class="' + (l[0] === PR.level ? "on" : "") + '">' + l[1] + "</button>"; }).join("") + "</div>" +
+      '<p class="tiny" style="margin-top:8px">' + esc(PRLTXT[PR.level]) + "</p>";
+    var p = PR.plan && PR.plan.zone === PR.zone && PR.plan.level === PR.level ? PR.plan : null;
+    if (!p) h += '<p class="muted">Vorschau lädt …</p>';
+    else if (p.error) h += '<p class="warnline">' + esc(p.error) + "</p>";
+    else {
+      var ch = p.changes || [], m = p.memory;
+      h += '<div data-plan>' + (ch.length ? ch.map(prChange).join("") : prFind("OK", "ok", "Nichts zu tun", "Alles, wofür das DECK in dieser Zone zuständig ist, ist für dieses Profil schon da.")) + "</div>" +
+        (p.notes || []).map(function (n) { return '<p class="tiny">' + esc(n) + "</p>"; }).join("");
+      if (m) h += '<div class="facts" data-memory="' + esc(m.state) + '" style="margin-top:8px"><div><b>Speicher</b><span>' + chip({ ok: "reicht", warn: "knapp", block: "zu wenig" }[m.state] || m.state, { ok: "ok", warn: "warn", block: "bad" }[m.state] || "") +
+        " Aufbau der Blocklisten vorher " + esc(m.now) + " MB, danach " + esc(m.after) + " MB, frei " + esc(m.avail || "?") + " MB</span></div>" +
+        ((m.unknown || []).length ? "<div><b>Unbekannt</b><span>Größe noch nie geladener Listen, nicht eingerechnet: " + esc(m.unknown.map(function (t) { return PRTYPES[t] || t; }).join(", ")) + "</span></div>" : "") + "</div>";
+      if (p.blocked) h += '<div class="banner bad" data-blocked style="margin-top:10px">' + esc(p.blocked) + "</div>";
+      if (ch.length && !p.blocked) h += prModeHint() + '<div class="row" style="margin-top:10px"><button class="btn pri" data-act="pr-apply"' + (PR.busy || !prModeOk() ? " disabled" : "") + ">" + (PR.busy ? "Setzt um …" : "Umsetzen …") + "</button></div>";
+    }
+    h += prMsg("profile") + "</div>";
+    var ap = (d.applied || {})[PR.zone] || [];
+    if (ap.length) h += '<div class="card ok"><h3>Aktiv in ' + esc(prZoneName(PR.zone)) + "</h3>" + ap.map(function (a) {
+      return '<div class="item" data-applied="' + esc(a.id) + '"><div class="row sp"><span>' + chip("AKTIV", "ok") + " <b>Schutzprofil " + esc(prLevel(a.level)) + '</b> <span class="tiny">' + esc(ago(a.t)) + "</span></span>" +
+        '<button class="btn sm" data-act="pr-release" data-id="' + esc(a.id) + '" data-k="profile" data-l="' + esc("Schutzprofil " + prLevel(a.level) + " für " + prZoneName(PR.zone)) + '">Rückgängig …</button></div></div>';
+    }).join("") + "</div>";
+    return h;
+  }
+  function prDivert() {
+    var v = PR.d.divert || {}, h = "";
+    if (v.error || !v.ids) return '<div class="card"><h3>Suricata · Divert (IPS)</h3><p class="muted">' + esc(v.error || "keine Daten") + "</p></div>";
+    var g = v.gaps || [], down = g.indexOf("down") >= 0, nIn = g.filter(function (x) { return x.indexOf("in:") === 0; }).length;
+    var tag = down ? ["STEHT", "bad"] : v.state === "active" ? ["AKTIV", "ok"] : v.state === "pending" ? ["WARTET", "cy"] : v.state === "failed" ? ["FEHLER", "bad"] : ["AUS", ""];
+    var mode = { pcap: "nur melden (pcap)", netmap: "sperren über netmap", divert: "sperren über Divert" }[v.ids.mode] || v.ids.mode;
+    h += '<div class="card ' + (down || v.state === "failed" ? "bad" : v.state === "active" ? "ok" : "") + '" data-dvtstate="' + esc(v.state) + '"><div class="row sp"><h3 style="margin:0">Suricata · Divert (IPS)</h3>' + chip(tag[0], tag[1]) + "</div>" +
+      '<div class="facts" style="margin-top:8px"><div><b>Modus</b><span>' + esc(mode) + "</span></div><div><b>Suricata</b><span>" + (v.ids.enabled ? (v.running ? "läuft" : "steht") : "aus") + (v.ids.mode === "divert" && v.running ? " · " + esc(v.listening) + " Listener" : "") + "</span></div>" +
+      (v.state === "active" ? "<div><b>Freigaben</b><span>" + esc(v.marked) + " mit Divert" + (nIn ? " · " + nIn + " ohne" : "") + "</span></div>" : "") + "</div>";
+    if (down) h += '<div class="banner bad" data-dvtdown>Suricata steht - der Verkehr der Freigaben mit Divert wird verworfen. Das DECK startet Suricata neu (höchstens alle 5 Minuten ein Versuch).</div>';
+    if (v.state === "pending") h += '<p class="muted">Gespeichert - aktiv nach dem nächsten Neustart der Firewall' + (v.listening ? "; Suricata lauscht aber schon im Divert-Modus, ein Neustart ist nicht nötig." : ".") + "</p>";
+    if (v.state === "failed" && v.last && v.last.error) h += '<p class="warnline">' + esc(v.last.error) + "</p>";
+    var acts = "";
+    if (v.state === "pending" && v.listening) acts += '<button class="btn pri" data-act="pr-dvt" data-v="now">Jetzt aktivieren …</button>';
+    if (v.entry) acts += '<button class="btn" data-act="pr-release" data-id="' + esc(v.entry) + '" data-k="divert" data-l="Suricata auf Divert (IPS)">Rückgängig …</button>';
+    if (v.state !== "active" && v.state !== "pending") {
+      var nin = (v.in || []).filter(function (r) { return !r.divert && r.enabled && (v.zen_layer || !r.zen); }).length, nwan = (v.in || []).filter(function (r) { return r.wan; }).length;
+      h += '<p class="muted" data-dvtplan>Vorschau: Modus Divert mit ' + Math.min(v.cpus || 1, 64) + " Listenern (= CPUs) · " + nin + " Freigabe(n) bekommen Divert (" + (nin - nwan) + " in den Zonen, " + nwan + " auf dem WAN)" +
+        ((v.ours || []).length ? " · " + v.ours.length + " alte Ausgangsregel(n) aus 0.67-0.70 werden entfernt" : "") + ".</p>";
+      if (v.ids.enabled) acts += '<button class="btn pri" data-act="pr-dvt" data-v="apply">Auf Divert umstellen …</button>'; else h += '<p class="warnline">Suricata ist aus - zuerst unter Dienste › Intrusion Detection einschalten.</p>';
+    }
+    if (acts) h += prModeHint() + '<div class="row" style="margin-top:10px">' + acts + "</div>";
+    h += prMsg("divert") + "</div>";
+    (v.guarded || []).forEach(function (x) { h += '<div class="card warn" data-dvtguard>' + prFind("SELBSTSCHUTZ", "warn", "Divert wieder entfernt · " + ago(x.t), esc(x.why) + " - sonst wäre der Verkehr dieser Freigaben verworfen worden.") + "</div>"; });
+    if ((v.zen_zones || []).length) {
+      var skip = (v.skipped || []).map(function (x) { return x.uuid; }),
+        zadd = (v.in || []).filter(function (r) { return r.zen && r.enabled && !r.divert && skip.indexOf(r.uuid) < 0; }).length, zdel = (v.extra || []).length;
+      h += '<div class="card" data-dvtzenrow><h3>Zenarmor-Zonen</h3><div class="set"><span>Zusätzlich mit Suricata prüfen<small>Zweite Schicht in ' + esc(v.zen_zones.map(prZoneName).join(", ")) +
+        ': Zenarmor sperrt nach Ziel, Suricata nach Signatur (Exploits, C2-Verhalten)</small></span><label class="sw"><input type="checkbox" data-dvtzen' + (v.zen_layer ? " checked" : "") + ' aria-label="Zenarmor-Zonen zusätzlich mit Suricata prüfen"><i></i></label></div>' +
+        (v.state === "active" && ((v.zen_layer && zadd) || (!v.zen_layer && zdel)) ? prModeHint() + '<div class="row" style="margin-top:8px"><button class="btn pri" data-act="pr-dvt" data-v="zen">' + (v.zen_layer ? "Zenarmor-Zonen jetzt aufnehmen (" + zadd + ")" : "Zenarmor-Zonen jetzt herausnehmen (" + zdel + ")") + " …</button></div>" : "") +
+        (v.state === "active" ? "" : '<p class="tiny">Gilt beim nächsten Umstellen auf Divert.</p>') + prMsg("zen") + "</div>";
+    }
+    if ((v.portal || []).length && v.state === "active") h += '<div class="card" data-dvtportal>' + prFind("HINWEIS", "", v.portal.map(prZoneName).join(", "), "Captive Portal: DNS dieser Zone(n) erreicht Suricata nicht (eigene Freigabe vor allen anderen), der übrige Verkehr schon.") + "</div>";
+    if ((v.skipped || []).length) h += '<div class="card warn" data-dvtskip><h3>Ohne Divert · ' + v.skipped.length + "</h3>" + v.skipped.map(function (x) {
+      return prFind("OHNE DIVERT", "warn", x.descr || "(ohne Beschreibung)", esc((x.ifs || []).map(prZoneName).join(", ")) + " · Regel " + esc(String(x.uuid).slice(0, 8)) + "… · " +
+        (x.why === "off" ? "pf lädt diese Freigabe nicht (Gateway down mit „Regeln überspringen“ oder Gateway und IPv4/IPv6 passen nicht) - ihr Verkehr läuft ungeprüft wie bisher." : "pf hat sie ohne divert-to geladen - ihr Verkehr läuft ungeprüft wie bisher."));
+    }).join("") + "</div>";
+    return h;
+  }
+  function prIds() {
+    var v = PR.d.idspol || {}, h = "";
+    if (v.error || !v.ids) return '<div class="card"><h3>Suricata · Policies nach Ziel</h3><p class="muted">' + esc(v.error || "keine Daten") + "</p></div>";
+    if (v.entry) {
+      var done = v.reload && v.entry_t && v.reload.done >= v.entry_t;
+      h += '<div class="card ok" data-supactive><div class="row sp"><span>' + chip("AKTIV", "ok") + " <b>Policies nach Ziel · " + esc(prLevel(v.level)) + "</b></span>" + chip(done ? "WIRKT" : "LÄDT", done ? "ok" : "cy") + "</div>" +
+        '<p class="muted" style="margin-top:8px" data-supload="' + (done ? "done" : "wait") + '">' + (done ? "Suricata hat die Regeln übernommen · " + esc(ago(v.reload.done)) : "Suricata lädt die Regeln im Hintergrund neu (ohne Unterbrechung, kann einige Minuten dauern) - bis dahin gelten die bisherigen.") + "</p>" +
+        '<p class="tiny">' + (v.ours || []).length + " Policy(s) des DECK" + ((v.owner || []).length ? " · deine eigenen gehen vor: " + esc(v.owner.map(function (o) { return o.description || o.uuid; }).slice(0, 4).join(", ")) : "") + "</p>" +
+        '<div class="row"><button class="btn sm" data-act="pr-release" data-id="' + esc(v.entry) + '" data-k="ids" data-l="Suricata-Policies des DECK (deine eigenen bleiben)">Rückgängig …</button></div></div>';
+    }
+    h += '<div class="card"><h3>Suricata · Policies nach Ziel</h3><div class="seg">' + PRL.map(function (l) { return '<button data-act="pr-slevel" data-l="' + l[0] + '" class="' + (l[0] === PR.slevel ? "on" : "") + '">' + l[1] + "</button>"; }).join("") + "</div>" +
+      '<p class="tiny" style="margin-top:8px">' + esc(PRSUP[PR.slevel]) + "</p>";
+    var p = PR.splan && PR.splan.level === PR.slevel ? PR.splan : null;
+    if (!p) h += '<p class="muted">Vorschau lädt …</p>';
+    else if (p.error) h += '<p class="warnline">' + esc(p.error) + "</p>";
+    else {
+      var ch = p.changes || [];
+      h += '<div data-supplan>' + (ch.length ? ch.map(function (c) {
+        var g = c.goal ? (PRGOALS[c.goal] || c.goal) : "unbekannt";
+        if (c.kind === "del") return prFind("WEG", "warn", g, "Policy des DECK entfällt in dieser Stufe", ' data-supchange="del"');
+        var b = c.body || {}, cs = (b.content || "").split(",").filter(Boolean),
+          sev = cs.filter(function (x) { return x.indexOf("signature_severity.") === 0; }).map(function (x) { return x.split(".")[1]; }), conf = cs.filter(function (x) { return x.indexOf("confidence.") === 0; }).map(function (x) { return x.split(".")[1]; });
+        return prFind(c.kind === "add" ? "NEU" : "ÄNDERN", "cy", g + " · verwerfen", esc((sev.length ? "Schwere: " + sev.join("/") + " · Vertrauen: " + conf.join("/") : "alle Regeln der Regelsätze") + " · " + (b.rulesets || "").split(",").filter(Boolean).length + " Regelsatz/-sätze"), ' data-supchange="' + esc(c.kind) + '"');
+      }).join("") : prFind("OK", "ok", "Nichts zu tun", "Die Suricata-Policies stehen schon so.")) + "</div>" +
+        (p.notes || []).map(function (n) { return '<p class="tiny">' + esc(n) + "</p>"; }).join("") +
+        '<p class="tiny">Nur Regeln, die heute melden, werden verworfen. Deine eigenen Policies und von Hand geänderte Regeln gehen vor. Suricata lädt neu ohne Neustart - das kann einige Minuten dauern.</p>';
+      if (ch.length) h += prModeHint() + '<div class="row" style="margin-top:10px"><button class="btn pri" data-act="pr-sapply"' + (PR.busy || !prModeOk() ? " disabled" : "") + ">" + (PR.busy ? "Setzt um …" : "Umsetzen …") + "</button></div>";
+    }
+    return h + prMsg("ids") + "</div>";
+  }
+  function prLoadPlan() {
+    var z = PR.zone, l = PR.level; if (PR.planBusy === z + l) return; PR.planBusy = z + l;
+    api("GET", "/api/protect/plan?zone=" + encodeURIComponent(z) + "&level=" + l).then(function (j) { return j.result || {}; }, function (e) { return { error: errMsg(e) }; })
+      .then(function (p) { PR.planBusy = null; if (z === PR.zone && l === PR.level) { PR.plan = Object.assign({}, p, { zone: z, level: l }); if (S.mounted === "protect") updProtect(); } });
+  }
+  function prLoadIds() {
+    var l = PR.slevel; if (PR.sBusy === l) return; PR.sBusy = l;
+    api("GET", "/api/protect/ids?level=" + l).then(function (j) { return j.result || {}; }, function (e) { return { error: errMsg(e) }; })
+      .then(function (p) { PR.sBusy = null; if (l === PR.slevel) { PR.splan = Object.assign({}, p, { level: l }); if (S.mounted === "protect") updProtect(); } });
+  }
+  function prDo(id, key, okText) {                         // the confirmed click: the firewall checks again and answers with an error when it says no
+    PR.busy = true; PR.msg[key] = ""; updProtect();
+    return api("POST", "/api/do", { id: id }).then(function () { toast(okText); }).catch(function (e) { PR.msg[key] = errMsg(e); toast(errMsg(e), true); })
+      .then(function () { PR.busy = false; PR.plan = PR.splan = null; return loadProtect(); }).then(refresh);
+  }
+  function prSet(key, value, msgKey) {
+    PR.msg[msgKey] = "";
+    return api("POST", "/api/protect/set", { key: key, value: value }).catch(function (e) { PR.msg[msgKey] = errMsg(e); toast(errMsg(e), true); }).then(loadProtect);
   }
   function monSearch(v) { if (v) MON.f.q = v; else delete MON.f.q; monLoad(false); }
   function doThen(label, p, after) { return p.then(function () { toast(label); return refresh(); }).then(after || function () { }).catch(function (e) { toast(errMsg(e), true); }); }
@@ -588,6 +801,27 @@
     if (a === "mon-more") { monLoad(true); return; }
     if (a === "mon-live") { MON.live = !MON.live; updMonitor(); monTimer(); return; }
     if (a === "mon-row") { monDetail(b.dataset.id); return; }
+    if (a === "pr-tab") { PR.tab = b.dataset.t; prSave(); updProtect(); return; }
+    if (a === "pr-level") { PR.level = b.dataset.l; PR.msg.profile = ""; updProtect(); return; }
+    if (a === "pr-slevel") { PR.slevel = b.dataset.l; PR.msg.ids = ""; updProtect(); return; }
+    if (a === "pr-apply") { var pz = PR.zone, pl = PR.level, pp = PR.plan || {};
+      sheet({ title: "Schutzprofil umsetzen?", html: "<p><b>" + esc(pp.title || "Schutzprofil " + prLevel(pl) + " für " + prZoneName(pz)) + "</b></p><p>" + (pp.changes || []).length + " Änderung(en) wie in der Vorschau.</p>" +
+        '<p class="muted">Die Firewall prüft alles noch einmal (auch den Speicher). Ändert sich danach etwas an den Leitungen, nimmt sie alles wieder zurück. „Rückgängig“ entfernt Listen und Regeln des Profils.</p>', ok: "Jetzt umsetzen",
+        onOk: function () { prDo("prf:" + pz + ":" + pl, "profile", "Schutzprofil umgesetzt"); } }); return; }
+    if (a === "pr-sapply") { var sl = PR.slevel;
+      sheet({ title: "Suricata-Policies umsetzen?", html: "<p><b>Policies nach Ziel · " + esc(prLevel(sl)) + "</b></p><p class=\"muted\">Die Policies des DECK werden gespeichert und die Regeln ohne Neustart neu geladen (kann einige Minuten dauern, bis dahin gelten die bisherigen). Deine eigenen Policies bleiben und gehen vor.</p>", ok: "Jetzt umsetzen",
+        onOk: function () { prDo("sup:" + sl, "ids", "Suricata-Policies gespeichert"); } }); return; }
+    if (a === "pr-dvt") { var dv = b.dataset.v;
+      if (dv === "apply") sheet({ title: "Auf Divert umstellen?", html: "<p>Suricata prüft dann, was deine Freigaben hereinlassen, mit echter Geräte-Adresse. Lauscht Suricata schon im Divert-Modus, wirkt es sofort, sonst beim nächsten Neustart der Firewall.</p>" +
+        '<p class="warnline">Steht Suricata später, wird der Verkehr dieser Freigaben verworfen, bis das DECK Suricata neu startet oder Divert nach 5 Minuten wieder wegnimmt.</p><p class="muted">Zur Bestätigung tippe <b>DIVERT</b>.</p>',
+        field: { placeholder: "DIVERT", valid: function (x) { return x.trim().toUpperCase() === "DIVERT"; } }, ok: "Umstellen", danger: true, onOk: function () { prDo("dvt:apply", "divert", "Divert gespeichert"); } });
+      else if (dv === "now") sheet({ title: "Divert jetzt aktivieren?", html: "<p>Suricata lauscht bereits. Danach prüft die Firewall, ob DNS noch antwortet - sonst nimmt sie alles zurück.</p>", ok: "Aktivieren", danger: true, onOk: function () { prDo("dvt:now", "divert", "Divert aktiviert"); } });
+      else sheet({ title: "Zenarmor-Zonen umstellen?", html: "<p>" + esc(b.textContent.replace(" …", "")) + '</p><p class="muted">Danach prüft die Firewall, ob die Freigaben im geladenen Regelsatz stehen und Suricata lauscht - sonst nimmt sie alles zurück.</p>', ok: "Umstellen", danger: true,
+        onOk: function () { prDo("dvt:zen", "zen", "Zenarmor-Zonen umgestellt"); } });
+      return; }
+    if (a === "pr-release") { var prid = b.dataset.id, pk = b.dataset.k;
+      sheet({ title: "Rückgängig machen?", html: "<p><b>" + esc(b.dataset.l) + "</b></p><p class=\"muted\">Die Firewall entfernt, was das DECK dafür angelegt hat, und stellt den vorherigen Stand her.</p>", ok: "Ja, zurücknehmen", danger: true,
+        onOk: function () { PR.msg[pk] = ""; api("POST", "/api/release", { id: prid }).then(function () { toast("Zurückgenommen"); }).catch(function (e) { PR.msg[pk] = errMsg(e); toast(errMsg(e), true); }).then(function () { PR.plan = PR.splan = null; return loadProtect(); }).then(refresh); } }); return; }
     if (a === "iseg") { INC.tab = b.dataset.t; INC.open = null; updIncidents(); return; }
     if (a === "inc-open") { INC.open = INC.open === b.dataset.id ? null : b.dataset.id; updIncidents(); return; }
     if (a === "inc-case") { doThen("Gespeichert", api("POST", "/api/incident/case", { ip: b.dataset.ip, status: b.dataset.st, until: +b.dataset.until }), loadIncidents); return; }
@@ -613,6 +847,9 @@
     if (t.dataset.pref === "quiet") { savePrefs({ quiet: { on: t.checked } }); }
     else if (t.dataset.pref) { var ev = {}; ev[t.dataset.pref] = t.checked; savePrefs({ events: ev }); }
     else if (t.dataset.q) { var q = {}; q[t.dataset.q] = t.value; savePrefs({ quiet: q }); }
+    else if (t.id === "prZone") { PR.zone = t.value; PR.msg.profile = ""; t.blur(); updProtect(); }
+    else if (t.dataset.pskip != null) { var off = $$("[data-pskip]").filter(function (x) { return !x.checked; }).map(function (x) { return x.dataset.pskip; }); prSet("pskip", off.length ? off.join(",") : "none", "sel"); }
+    else if (t.dataset.dvtzen != null) { prSet("dvtzen", t.checked ? "on" : "off", "zen"); }
     else if (t.dataset.ui) { UI[t.dataset.ui] = t.checked; saveUi(); if (t.dataset.ui === "calm" && S.core) S.core.pause(UI.calm); }
   });
   document.addEventListener("keydown", function (e) {

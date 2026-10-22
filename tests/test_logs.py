@@ -77,7 +77,7 @@ def test_filters(L):
 
 def test_nothing_from_the_request_becomes_sql(L):
     bad = [('threat', {'src': "1' OR '1'='1"}), ('threat', {'sev': '1 OR 1=1'}), ('threat', {'port': '22;DROP TABLE eve'}), ('nope', {}), ('threat', {'from': 'gestern'}),
-           ('threat', {'from': NOW - 100 * 86400}), ('system', {'port': '22'}), ('system', {'sig': 'x'}), ('traffic', {'dst': '10.0.0.0/99'}), ('threat', {'q': 'x' * 201})]
+           ('threat', {'from': NOW - 500 * 86400}), ('system', {'port': '22'}), ('system', {'sig': 'x'}), ('traffic', {'dst': '10.0.0.0/99'}), ('threat', {'q': 'x' * 201})]
     for kind, args in bad:
         with pytest.raises(BadQuery):
             L.search(kind, args)

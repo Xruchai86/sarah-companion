@@ -52,6 +52,8 @@ class Ctl(BaseHTTPRequestHandler):
             elif cmd == 'invalidate': ext['poller'].st_t = 0
             elif cmd == 'logs': ext['analyzer'].flush([x.encode() for x in c['lines']])          # lines as syslog-ng of the firewall sends them
             elif cmd == 'rulemap': fw.rulemap = c['value']
+            elif cmd == 'protect': merge(fw.protect, c['patch'])
+            elif cmd == 'protect_mode': fw.protect_mode = c['value']
         data_ = json.dumps(out).encode()
         self.send_response(200); self.send_header('Content-Length', str(len(data_))); self.end_headers(); self.wfile.write(data_)
 

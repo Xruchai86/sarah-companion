@@ -50,18 +50,30 @@ FW_COLS = ('t', 'rid', 'iface', 'action', 'dir', 'ipv', 'proto', 'src', 'sport',
 TYPES = {
     'threat': {'from': 'eve', 'where': "type IN ('alert', 'drop')",
                'cols': {'t': 't', 'sev': 'sev', 'action': 'action', 'src': 'src', 'sport': 'sport', 'dst': 'dst', 'dport': 'dport', 'proto': 'proto', 'sig': 'sig',
-                        'cat': "raw->>'$.alert.category'", 'sid': "TRY_CAST(raw->>'$.alert.signature_id' AS BIGINT)"},
-               'text': "COALESCE(sig, '') || ' ' || COALESCE(raw->>'$.alert.category', '')"},
+                        'cat': 'cat', 'sid': 'sid'},
+               'text': "COALESCE(sig, '') || ' ' || COALESCE(cat, '')"},
     'app': {'from': 'eve', 'where': "type IN ('tls', 'http')",
-            'cols': {'t': 't', 'type': 'type', 'src': 'src', 'dst': 'dst', 'dport': 'dport', 'host': 'host', 'version': "raw->>'$.tls.version'",
-                     'ja4': "raw->>'$.tls.ja4'", 'url': "raw->>'$.http.url'", 'agent': "raw->>'$.http.http_user_agent'"},
-            'text': "COALESCE(host, '') || ' ' || COALESCE(raw->>'$.http.url', '')"},
+            'cols': {'t': 't', 'type': 'type', 'src': 'src', 'dst': 'dst', 'dport': 'dport', 'host': 'host', 'version': 'tls_ver',
+                     'ja4': 'ja4', 'url': 'url', 'agent': 'agent'},
+            'text': "COALESCE(host, '') || ' ' || COALESCE(url, '')"},
     'traffic': {'from': 'fw', 'where': 'TRUE',
                 'cols': {'t': 't', 'action': 'action', 'dir': 'dir', 'iface': 'iface', 'proto': 'proto', 'src': 'src', 'sport': 'sport', 'dst': 'dst', 'dport': 'dport',
                          'len': 'len', 'rid': 'rid'},
                 'text': "COALESCE(iface, '') || ' ' || COALESCE(rid, '')"},
     'system': {'from': 'sys', 'where': 'TRUE', 'cols': {'t': 't', 'program': 'program', 'msg': 'msg'}, 'text': 'msg'},
 }
+# the same views over the hourly values (analyzer.py rollup): only the fields a condensed hour still has; COUNT means SUM(n)
+TYPES_H = {
+    'threat': {'from': 'eve_h', 'where': "type IN ('alert', 'drop')",
+               'cols': {'t': 'h', 'sev': 'sev', 'action': 'action', 'src': 'src', 'dst': 'dst', 'dport': 'dport', 'sig': 'sig', 'cat': 'cat'},
+               'text': "COALESCE(sig, '') || ' ' || COALESCE(cat, '')"},
+    'app': {'from': 'eve_h', 'where': "type IN ('tls', 'http')",
+            'cols': {'t': 'h', 'type': 'type', 'src': 'src', 'dst': 'dst', 'dport': 'dport', 'host': 'host'}, 'text': "COALESCE(host, '')"},
+    'traffic': {'from': 'fw_h', 'where': 'TRUE',
+                'cols': {'t': 'h', 'action': 'action', 'dir': 'dir', 'iface': 'iface', 'proto': 'proto', 'src': 'src', 'dst': 'dst', 'dport': 'dport', 'rid': 'rid'},
+                'text': "COALESCE(iface, '') || ' ' || COALESCE(rid, '')"},
+}
+MAX_RANGE_H = 400 * 86400
 FIELDS = {'src': 'src', 'dst': 'dst', 'port': None, 'action': 'action', 'sev': 'sev', 'proto': 'proto', 'iface': 'iface', 'host': 'host', 'rid': 'rid', 'program': 'program',
           'sig': 'sig', 'type': 'type', 'dir': 'dir', 'version': None}
 TOP = {'threat': [('src', 'src'), ('dst', 'dst'), ('sig', 'sig')], 'app': [('src', 'src'), ('host', 'host'), ('dst', 'dst')],
@@ -74,20 +86,23 @@ class BadQuery(ValueError):
     pass
 
 
-def where(kind, args, now=None):
-    """-> (sql, params) for log type `kind` and the request's filters; raises BadQuery for anything unknown or malformed"""
-    if kind not in TYPES:
+def where(kind, args, now=None, types=None, max_range=MAX_RANGE):
+    """-> (sql, params) for log type `kind` and the request's filters; raises BadQuery for anything unknown or malformed.
+    types=TYPES_H: the same over the hourly values (filters they cannot answer raise BadQuery)"""
+    types = types or TYPES
+    if kind not in types:
         raise BadQuery('unbekannte Protokollart')
-    T = TYPES[kind]
+    T = types[kind]
     now = now or time.time()
     try:
         t1 = float(args.get('to') or now)
         t0 = float(args.get('from') or (t1 - 86400))
     except ValueError:
         raise BadQuery('Zeitraum ungültig')
-    if not (0 <= t1 - t0 <= MAX_RANGE):
-        raise BadQuery('Zeitraum ungültig (höchstens 90 Tage)')
-    sql, par = ['(%s)' % T['where'], 't >= ?', 't < ?'], [t0, t1]
+    if not (0 <= t1 - t0 <= max_range):
+        raise BadQuery('Zeitraum ungültig (höchstens %d Tage)' % (max_range // 86400))
+    tc = T['cols'].get('t', 't')
+    sql, par = ['(%s)' % T['where'], '%s >= ?' % tc, '%s < ?' % tc], [t0, t1]
     q = str(args.get('q') or '').strip()
     if q:
         if len(q) > 200:
@@ -151,6 +166,13 @@ class Logs:
             return [dict(zip(names, r)) for r in cur.fetchall()]
 
     def search(self, kind, args, now=None):
+        clamped = False
+        try:                                                             # a longer span (1 year overview): the list shows the last 90 days
+            t1 = float(args.get('to') or now or time.time())
+            if args.get('from') and t1 - float(args['from']) > MAX_RANGE and t1 - float(args['from']) <= MAX_RANGE_H:
+                args, clamped = dict(args, **{'from': t1 - MAX_RANGE}), True
+        except ValueError:
+            pass
         w, par = where(kind, args, now)
         T = TYPES[kind]
         try:
@@ -161,7 +183,7 @@ class Logs:
         cols = ', '.join('%s AS "%s"' % (e, n) for n, e in T['cols'].items())
         rows = self._q('SELECT %s, rowid AS "id" FROM %s WHERE %s ORDER BY t DESC, rowid DESC LIMIT %d OFFSET %d' % (cols, T['from'], w, limit, offset), par)
         total = self._q('SELECT COUNT(*) AS n FROM %s WHERE %s' % (T['from'], w), par)[0]['n']
-        return {'kind': kind, 'rows': rows, 'total': total, 'limit': limit, 'offset': offset, 'cols': list(T['cols'])}
+        return {'kind': kind, 'rows': rows, 'total': total, 'limit': limit, 'offset': offset, 'cols': list(T['cols']), 'clamped': clamped}
 
     def detail(self, kind, rid):
         if kind not in TYPES or not str(rid).isdigit():
@@ -174,20 +196,66 @@ class Logs:
             raise BadQuery('Eintrag nicht (mehr) vorhanden')
         return r[0]
 
-    def summary(self, kind, args, now=None):
-        w, par = where(kind, args, now)
+    def _parts(self, kind, args, now):
+        """the sources of a summary: [(sql FROM ... WHERE ..., params, count expression, time column)]. Within the single rows'
+        time span the single rows (exact); before it the hourly values - when every filter of the request exists there.
+        -> (parts, t0, t1, note)"""
+        now = now or time.time()
+        try:
+            t1 = float(args.get('to') or now)
+            t0 = float(args.get('from') or (t1 - 86400))
+        except ValueError:
+            raise BadQuery('Zeitraum ungültig')
         T = TYPES[kind]
-        t0, t1 = par[0], par[1]
+        first = self._q('SELECT MIN(t) AS m FROM %s WHERE %s' % (T['from'], T['where']), [])[0]['m']
+        if first is None:
+            cut = t1                                                     # no single rows (left): everything from the hourly values
+        else:
+            hf = float(int(first // 3600) * 3600)                        # the hour of the oldest single row may be partly deleted:
+            src = {'eve': 'eve', 'fw': 'fw'}.get(T['from'])              # from the hourly values only when that hour is condensed already
+            up = self._q('SELECT upto AS u FROM rollup WHERE name = ?', [src])[0]['u'] if kind in TYPES_H and self._q('SELECT COUNT(*) AS n FROM rollup WHERE name = ?', [src])[0]['n'] else None
+            cut = hf + 3600 if up is not None and up >= hf + 3600 else hf
+        cut = max(t0, min(cut, t1))
+        parts, note = [], ''
+        if kind in TYPES_H and t0 < cut:
+            try:
+                if args.get('port') or args.get('q'):
+                    raise BadQuery('port/q')
+                wh, ph = where(kind, dict(args, **{'from': t0, 'to': min(cut, t1)}), now, TYPES_H, MAX_RANGE_H)
+                parts.append(('%s WHERE %s' % (TYPES_H[kind]['from'], wh), ph, 'SUM(n)', 'h', TYPES_H[kind]['cols']))
+            except BadQuery:
+                note = 'Vor %s nur Einzelzeilen: dieser Filter ist in den Stundenwerten nicht enthalten.' % time.strftime('%d.%m.%Y', time.localtime(cut))
+        elif t0 < cut and kind not in TYPES_H:
+            note = ''
+        if t1 > cut:
+            w, par = where(kind, dict(args, **{'from': max(t0, cut) if parts else t0, 'to': t1}), now, TYPES, MAX_RANGE_H)
+            parts.append(('%s WHERE %s' % (T['from'], w), par, 'COUNT(*)', 't', T['cols']))
+        return parts, t0, t1, note
+
+    def summary(self, kind, args, now=None):
+        if kind not in TYPES:
+            raise BadQuery('unbekannte Protokollart')
+        parts, t0, t1, note = self._parts(kind, args, now)
+        if t1 - t0 > (MAX_RANGE_H if kind in TYPES_H else MAX_RANGE) or t1 < t0:
+            raise BadQuery('Zeitraum ungültig')
         step = max(60, int((t1 - t0) / 48 // 60 * 60) or 60)
-        hist = self._q('SELECT CAST(floor(t / %d) * %d AS BIGINT) AS b, COUNT(*) AS n FROM %s WHERE %s GROUP BY 1 ORDER BY 1' % (step, step, T['from'], w), par)
-        out = {'kind': kind, 'step': step, 'from': t0, 'to': t1, 'hist': hist, 'top': {}}
-        for name, col in TOP[kind]:
-            out['top'][name] = self._q('SELECT CAST(%s AS VARCHAR) AS v, COUNT(*) AS n FROM %s WHERE %s AND %s IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10' % (
-                T['cols'].get(col, col), T['from'], w, T['cols'].get(col, col)), par)
-        if kind in ('threat', 'traffic'):
-            out['top']['action'] = self._q('SELECT action AS v, COUNT(*) AS n FROM %s WHERE %s GROUP BY 1 ORDER BY 2 DESC' % (T['from'], w), par)
-        if kind == 'threat':
-            out['top']['sev'] = self._q('SELECT CAST(sev AS VARCHAR) AS v, COUNT(*) AS n FROM %s WHERE %s GROUP BY 1 ORDER BY 1' % (T['from'], w), par)
+        if t1 - t0 > 2 * 86400:
+            step = max(step, 3600)                                   # the hourly values have no finer grain
+
+        def union(sel, extra=''):
+            q, par = [], []
+            for frm, p, cnt, tc, cols in parts:
+                q.append('SELECT %s, %s AS n FROM %s %s GROUP BY ALL' % (sel(tc, cols), cnt, frm, extra(cols) if callable(extra) else extra))
+                par += p
+            return ' UNION ALL '.join(q), par
+        sub, par = union(lambda tc, cols: 'CAST(floor(%s / %d) * %d AS BIGINT) AS b' % (tc, step, step))
+        hist = self._q('SELECT b, CAST(SUM(n) AS BIGINT) AS n FROM (%s) GROUP BY 1 ORDER BY 1' % sub, par) if parts else []
+        out = {'kind': kind, 'step': step, 'from': t0, 'to': t1, 'hist': hist, 'top': {}, 'note': note,
+               'hourly': any(tc == 'h' for _f, _p, _c, tc, _cols in parts)}
+        for name, col in TOP[kind] + ([('action', 'action')] if kind in ('threat', 'traffic') else []) + ([('sev', 'sev')] if kind == 'threat' else []):
+            sub, par = union(lambda tc, cols: 'CAST(%s AS VARCHAR) AS v' % cols.get(col, col), lambda cols: 'AND %s IS NOT NULL' % cols.get(col, col))
+            order = 'ORDER BY 1' if name == 'sev' else 'ORDER BY 2 DESC, 1 LIMIT 10' if name not in ('action',) else 'ORDER BY 2 DESC'
+            out['top'][name] = self._q('SELECT v, CAST(SUM(n) AS BIGINT) AS n FROM (%s) GROUP BY 1 %s' % (sub, order), par) if parts else []
         return out
 
     def csv(self, kind, args, now=None, limit=50000):

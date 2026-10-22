@@ -19,10 +19,14 @@ import time
 import urllib.parse
 
 PATH = '/api/scdeck/stats/sarah'
-ID_ACTION = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dohcore|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|hrd:(dnssec|rebind|wan_blockpriv|wan_blockbogons|tlslog|evelimit)|tsk:[0-9]{1,6}|cat:[a-z0-9-]{1,40}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
+PATH_PROTECT = '/api/scdeck/stats/protect'     # read only: status and previews (os-scdeck 0.79 adds it to the app's right)
+ID_ACTION = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dohcore|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|hrd:(dnssec|rebind|wan_blockpriv|wan_blockbogons|tlslog|evelimit)|prf:[a-z0-9_]{1,32}:(basis|standard|streng)|dvt:(apply|now|zen)|sup:(basis|standard|streng)|tsk:[0-9]{1,6}|cat:[a-z0-9-]{1,40}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
 ID_JOURNAL = re.compile(r'\d{1,6}')
 CASE = re.compile(r'(new|progress|done|false):\d{1,12}')
 NOTE_B64 = re.compile(r'[A-Za-z0-9_-]{1,1400}={0,2}')
+ZONE = re.compile(r'[a-z0-9_]{1,32}')
+LEVELS = ('basis', 'standard', 'streng')
+PSKIP = re.compile(r'none|[a-z0-9_]{1,32}(,[a-z0-9_]{1,32}){0,63}')
 
 
 class OpnError(Exception):
@@ -52,9 +56,13 @@ def valid_ip(v):
         return False
 
 
-def check_command(cmd, value=''):
+def check_command(cmd, value='', key=None):
     """-> value to send, or raises OpnError. Mirrors the firewall's own input rules."""
     value = '' if value is None else str(value)
+    if cmd == 'deckset':                                       # the two DECK settings of the protection page (os-scdeck 0.79)
+        if not ((key == 'dvtzen' and value in ('on', 'off')) or (key in ('pskip', 'dvtskip') and PSKIP.fullmatch(value))):
+            raise OpnError('Ungültige Einstellung.', 'input')
+        return value
     if cmd in ('analyze', 'tasks', 'inv', 'noaus', 'incidents', 'rulemap', 'job', 'apps'):
         return ''
     if cmd == 'appdev':
@@ -149,7 +157,7 @@ class Opn:
         self.store.set_pin(self.peek_fingerprint())
 
     # ---------------------------------------------------------------- requests
-    def _request(self, method, form=None):
+    def _request(self, method, form=None, path=PATH):
         conn = self._connect()
         try:
             body, headers = None, {'Authorization': self.auth, 'Accept': 'application/json'}
@@ -157,7 +165,7 @@ class Opn:
                 body = urllib.parse.urlencode(form).encode()
                 headers['Content-Type'] = 'application/x-www-form-urlencoded'
             try:
-                conn.request(method, PATH, body=body, headers=headers)
+                conn.request(method, path, body=body, headers=headers)
                 r = conn.getresponse()
                 raw = r.read(4_000_000)
             except (socket.timeout, TimeoutError):
@@ -166,6 +174,10 @@ class Opn:
                 raise OpnError('Die Verbindung zur Firewall wurde unterbrochen (%s).' % type(e).__name__, 'offline')
         finally:
             conn.close()
+        if r.status in (401, 403) and path != PATH:
+            raise OpnError('Die Firewall erlaubt der App die Schutz-Übersicht nicht. Das Recht „DECK: S.A.R.A.H. (Apps)“ umfasst sie ab os-scdeck 0.79 - bitte das Plugin aktualisieren.', 'auth')
+        if r.status == 404 and path != PATH:
+            raise OpnError('Die Schutz-Übersicht gibt es dort nicht. Sie braucht os-scdeck ab 0.79.', 'plugin')
         if r.status in (401, 403):
             raise OpnError('Die Firewall lehnt den Zugang ab. Prüfe Schlüssel und Geheimnis und ob der Benutzer das Recht „DECK: S.A.R.A.H. (Apps)“ hat.', 'auth')
         if r.status == 404:
@@ -184,9 +196,28 @@ class Opn:
             raise OpnError(str(d['error'])[:200])
         return d
 
-    def command(self, cmd, value=''):
+    def protect(self, zone=None, level=None, ids=None):
+        """the protection overview (zones, Divert, Suricata policies, Unbound lists); with zone+level the preview of a profile, with ids the
+        preview of the Suricata policies of a level - read only, the firewall's guards decide when it is applied (sarah cmd=do)"""
+        q = ''
+        if ids is not None:
+            if ids not in LEVELS:
+                raise OpnError('Ungültige Stufe.', 'input')
+            q = '?ids=' + ids
+        elif zone is not None:
+            if not ZONE.fullmatch(str(zone)) or level not in LEVELS:
+                raise OpnError('Ungültige Zone oder Stufe.', 'input')
+            q = '?zone=%s&level=%s' % (zone, level)
+        d = self._request('GET', path=PATH_PROTECT + q)
+        if not isinstance(d, dict):
+            raise OpnError('Die Antwort der Firewall ist unerwartet.')
+        return d
+
+    def command(self, cmd, value='', key=None):
         form = {'cmd': cmd}
-        v = check_command(cmd, value)
+        v = check_command(cmd, value, key)
+        if cmd == 'deckset':
+            form['key'] = key
         if v != '':
             form['value'] = v
         d = self._request('POST', form)

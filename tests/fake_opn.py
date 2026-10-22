@@ -18,7 +18,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
-ACTION_ID = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dohcore|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|tsk:[0-9]{1,6}|cat:[a-z0-9-]{1,40}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
+from tests import protect_sample
+
+ACTION_ID = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dohcore|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|prf:[a-z0-9_]{1,32}:(basis|standard|streng)|dvt:(apply|now|zen)|sup:(basis|standard|streng)|tsk:[0-9]{1,6}|cat:[a-z0-9-]{1,40}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
 
 
 def make_cert(cn='opnsense.test'):
@@ -57,6 +59,8 @@ class FakeOpn:
         self.inv = {'items': [], 'queue': [], 'running': None, 'today': 0, 'max_day': 6, 'next': ''}
         self.tasks, self.calls, self.next_id = [], [], 1
         self.mode = None                                     # None | 'drop' (close the connection) | '403' | '500' | 'html'
+        self.protect = protect_sample.status(int(time.time()))
+        self.protect_mode = None                             # '403': the app's right without stats/protect (os-scdeck before 0.79)
         now = int(time.time())
         # shaped like incidents.cached() of os-scdeck 0.60 (keys the app reads)
         self.incidents = {'now': now, 'kpi': {'open': 1, 'watch': 0, 'done': 0, 'max': 62}, 'sources': {'suricata': True, 'dns': True}, 'gap': 900, 'open_min': 40, 'watch_min': 25,
@@ -93,6 +97,13 @@ class FakeOpn:
                     return
                 if self.headers.get('Authorization') != 'Basic ' + base64.b64encode(('%s:%s' % (fw.key, fw.secret)).encode()).decode() or fw.mode == '403':
                     return self.send(403, {'status': 403, 'message': 'Authentication Failed'})
+                path, _, query = self.path.partition('?')
+                if path == '/api/scdeck/stats/protect' and method == 'GET':
+                    if fw.protect_mode == '403':
+                        return self.send(403, {'status': 403, 'message': 'Forbidden'})
+                    with fw.lock:
+                        fw.calls.append((method, 'protect', query))
+                        return self.send(200, fw.handle_protect(dict(urllib.parse.parse_qsl(query))))
                 if self.path != '/api/scdeck/stats/sarah':
                     return self.send(404, {'errorMessage': 'Endpoint not found'})
                 if fw.mode == '500':
@@ -100,7 +111,7 @@ class FakeOpn:
                 if fw.mode == 'html':
                     return self.send(200, None, b'<html>login</html>')
                 with fw.lock:
-                    fw.calls.append((method, form.get('cmd'), form.get('value')))
+                    fw.calls.append((method, form.get('cmd'), form.get('value')) + ((form.get('key'),) if form.get('cmd') == 'deckset' else ()))
                     return self.send(200, fw.handle(method, form))
 
             def do_GET(self):
@@ -130,6 +141,64 @@ class FakeOpn:
         e.setdefault('result', 'ok')
         self.status['act']['actions'].append(e)
         return e
+
+    # ---------------------------------------------------------------- protection (StatsController::protectAction, same input rules)
+    def handle_protect(self, q):
+        now = int(time.time())
+        if q.get('ids'):
+            if q['ids'] not in ('basis', 'standard', 'streng'):
+                return {'error': 'invalid level'}
+            return protect_sample.ids_plan(q['ids'])
+        if q.get('zone'):
+            if not re.fullmatch(r'[a-z0-9_]{1,32}', q['zone']) or q.get('level') not in ('basis', 'standard', 'streng'):
+                return {'error': 'invalid zone or level'}
+            return protect_sample.plan(q['zone'], q['level'], now)
+        return copy.deepcopy(self.protect)
+
+    def do_protect(self, value):
+        """prf:/sup:/dvt: as sarahact.execute does them (only in the modes propose/auto), journal entry for the way back"""
+        if self.status['config'].get('mode') not in ('propose', 'auto'):
+            return {'error': 'S.A.R.A.H. ist nicht im Modus „Vorschlagen“ oder „Autonom“'}
+        p, now = self.protect, int(time.time())
+        kind, _, rest = value.partition(':')
+        if kind == 'prf':
+            zone, level = rest.split(':')
+            pl = protect_sample.plan(zone, level, now)
+            if pl.get('error') or pl.get('blocked'):
+                return {'error': pl.get('error') or pl['blocked']}
+            if not pl['changes']:
+                return {'error': 'Nichts zu tun'}
+            e = self.add_action(type='protect', who='du', active=True, descr=pl['title'], zone=zone, level=level)
+            p['applied'].setdefault(zone, []).append({'id': e['id'], 'level': level, 't': now, 'changes': pl['changes']})
+        elif kind == 'sup':
+            e = self.add_action(type='idspol', who='du', active=True, descr='Suricata-Policies nach Ziel: ' + rest, level=rest)
+            p['idspol'].update(level=rest, entry=e['id'], entry_t=now)
+        elif rest == 'zen':
+            if p['divert']['state'] != 'active':
+                return {'error': 'Divert ist nicht aktiv - die Auswahl gilt beim nächsten Umstellen'}
+            for r in p['divert']['in']:
+                if r['zen']:
+                    r['divert'] = p['divert']['zen_layer']
+            p['divert']['extra'] = []
+        elif rest == 'now':
+            if p['divert']['state'] != 'pending':
+                return {'error': 'Divert wartet nicht auf eine Aktivierung'}
+            p['divert']['state'] = 'active'
+        else:
+            e = self.add_action(type='divert', who='du', active=True, descr='Suricata auf Divert (IPS) umstellen')
+            p['divert'].update(state='pending', entry=e['id'])
+        return dict(copy.deepcopy(self.status), ok=True)
+
+    def release_protect(self, ident):
+        p = self.protect
+        for z in list(p['applied']):
+            p['applied'][z] = [a for a in p['applied'][z] if a['id'] != ident]
+            if not p['applied'][z]:
+                del p['applied'][z]
+        if p['idspol'].get('entry') == ident:
+            p['idspol'].update(entry=None, entry_t=None, ours=[], level=None)
+        if p['divert'].get('entry') == ident:
+            p['divert'].update(state='off', entry=None)
 
     # ---------------------------------------------------------------- the commands
     def handle(self, method, form):
@@ -173,6 +242,8 @@ class FakeOpn:
         if cmd in ('do', 'dismiss'):
             if not ACTION_ID.fullmatch(value):
                 return {'error': 'invalid action id'}
+            if cmd == 'do' and value[:4] in ('prf:', 'sup:', 'dvt:'):
+                return self.do_protect(value)
             props = self.status['act']['proposals']
             hit = [p for p in props if p['id'] == value]
             if not hit:
@@ -189,7 +260,21 @@ class FakeOpn:
                 return {'error': 'Nur eigene, noch aktive Eingriffe von S.A.R.A.H. lassen sich hier aufheben'}
             hit[0]['active'] = False
             hit[0]['undone'] = True
+            self.release_protect(int(value))
             return {'ok': True}
+        if cmd == 'deckset':                                     # StatsController::sarahArgs (0.79): dvtzen on|off, pskip none|zone,zone
+            key = form.get('key', '')
+            if not ((key == 'dvtzen' and value in ('on', 'off')) or (key in ('pskip', 'dvtskip') and re.fullmatch(r'none|[a-z0-9_]{1,32}(,[a-z0-9_]{1,32}){0,63}', value))):
+                return {'error': 'invalid setting'}
+            if key == 'dvtzen':
+                d = self.protect['divert']
+                d['zen_layer'] = value == 'on'
+                d['extra'] = [r['uuid'] for r in d['in'] if r['zen'] and r['divert'] and not d['zen_layer']]
+            else:
+                off = [] if value == 'none' else value.split(',')
+                for c in self.protect['choose']:
+                    c['skip'] = c['key'] in off
+            return {'ok': True, 'settings': {key: value}}
         if cmd in ('apps', 'appdev'):                            # shaped like l7.status() of os-scdeck (Zenarmor source)
             dev = {'key': '0a:00:27:00:00:04', 'ip': '192.168.1.20', 'start': now - 30 * 86400, 'learning': False, 'apps': 2, 'unknown_share': 0.1, 'risk': 2, 'oldtls': []}
             if cmd == 'appdev':

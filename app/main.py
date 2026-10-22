@@ -123,10 +123,10 @@ def create_app(env=None, start_poller=True):
         d = request.get_json(silent=True)
         return d if isinstance(d, dict) else {}
 
-    def fw(cmd, value=''):
+    def fw(cmd, value='', key=None):
         """one command to the firewall; a failure becomes a clear answer for the app (our own input check: 400, anything on the way: 502)"""
         try:
-            r = opn.command(cmd, value)
+            r = opn.command(cmd, value, key) if key is not None else opn.command(cmd, value)
         except OpnError as e:
             return err(str(e), 400 if e.kind == 'input' else 502, kind=e.kind)
         if isinstance(r, dict) and r.get('error'):
@@ -246,6 +246,40 @@ def create_app(env=None, start_poller=True):
     @app.post('/api/release')
     def release():
         return simple('release', 'id')
+
+    # ------------------------------------------------------------ protection (DECK › Schutzprofile): view and previews read only; applying is
+    # /api/do with prf:/sup:/dvt: and /api/release - the firewall checks everything again (sarahact.py), the app decides nothing itself
+    def protect_call(**kw):
+        g = guard(False)
+        if g:
+            return g
+        try:
+            r = opn.protect(**kw)
+        except OpnError as e:
+            return err(str(e), 400 if e.kind == 'input' else 502, kind=e.kind)
+        if r.get('error') and not r.get('zones'):
+            return err(str(r['error'])[:300], 400, kind='firewall')
+        return jsonify({'ok': True, 'result': r})
+
+    @app.get('/api/protect')
+    def protect():
+        return protect_call()
+
+    @app.get('/api/protect/plan')
+    def protect_plan():
+        return protect_call(zone=request.args.get('zone', ''), level=request.args.get('level', ''))
+
+    @app.get('/api/protect/ids')
+    def protect_ids():
+        return protect_call(ids=request.args.get('level', ''))
+
+    @app.post('/api/protect/set')
+    def protect_set():
+        g = guard(True)
+        if g:
+            return g
+        b = body()
+        return fw('deckset', str(b.get('value', '')), str(b.get('key', '')))
 
     # ------------------------------------------------------------ incidents (same work on them as on the DECK page)
     @app.get('/api/incidents')
