@@ -468,7 +468,8 @@ def create_app(env=None, start_poller=True):
         if name.startswith('api/') or '..' in name:
             return err('Nicht gefunden.', 404)
         r = send_from_directory(STATIC, name)
-        r.headers['Cache-Control'] = 'no-cache' if name in ('sw.js', 'manifest.webmanifest', 'index.html') else 'public, max-age=3600'
+        # code and styles are asked again each time (ETag: unchanged costs a 304) - after an update the new page shows at once, not an hour later
+        r.headers['Cache-Control'] = 'no-cache' if name in ('sw.js', 'manifest.webmanifest', 'index.html') or name.endswith(('.js', '.css')) else 'public, max-age=3600'
         if name == 'sw.js':
             r.headers['Service-Worker-Allowed'] = '/'
         return r

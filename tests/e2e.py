@@ -133,6 +133,11 @@ def run():
         page.keyboard.press('Escape')
         ctl('proposals', list=[]); refresh(page)
 
+        ctl('proposals', list=[{'id': 'dns:rdr', 'type': 'dns', 'descr': 'DNS auf die Firewall umleiten (Port 53)', 'affected': [], 'note': ''}])
+        refresh(page)
+        ok('vorbeugend' in text(page, '#wait'), 'DNS-Vorschlag ohne betroffene Geräte sagt trotzdem, warum (Vale 23.10.: die Karte stand ohne Text da)')
+        ctl('proposals', list=[])
+
         print('== 4. Analyse')
         ctl('next_scan', value={'level': 'watch', 'summary': 'Ein Gerät fragt DNS an der Firewall vorbei.'})
         page.click('[data-act=analyze]'); waitfn(page, "document.querySelector('#hud b').textContent === 'DENKT'", timeout=5000)
@@ -140,6 +145,16 @@ def run():
         waitfn(page, "document.querySelector('#hud b').textContent === 'BEOBACHTEN'", timeout=14000)
         ok('fragt DNS an der Firewall vorbei' in text(page, '#lage') and 'BEOBACHTEN' in text(page, '#lage'), 'das Ergebnis erscheint, Stufe BEOBACHTEN, der Kern färbt sich um')
         ctl('status', patch={'level': 'calm'})
+
+        print('== 4b. Anwendungen je Gerät: Auswahlfeld statt langer Liste')
+        page.goto(BASE + '/#monitor'); page.wait_for_timeout(700)
+        page.click('[data-act=mon-kind][data-k=app]'); page.wait_for_selector('#appDev', timeout=8000); page.wait_for_timeout(500)
+        ok(page.locator('#appDev option').count() == 2 and page.locator('#monBody table.lt').count() == 0, 'ein Auswahlfeld mit 2 Geräten, keine Tabelle aller Geräte')
+        ok(page.eval_on_selector('#appDev', 'e => e.value') == '0a:00:27:00:00:09' and 'nflxvideo.net' in text(page, '#appDetail'),
+           'vorausgewählt: das Gerät mit dem höchsten Risiko, seine Anwendungen darunter')
+        page.select_option('#appDev', '0a:00:27:00:00:04'); page.wait_for_timeout(700)
+        ok('router9.teamviewer.com' in text(page, '#appDetail') and 'nflxvideo.net' not in text(page, '#appDetail'), 'anderes Gerät gewählt: nur seine Anwendungen')
+        page.goto(BASE + '/#core'); page.wait_for_timeout(500)
 
         print('== 5. Aufträge (abgeschaltet)')
         ok(page.locator('nav [data-v=tasks], [data-act=go][data-v=tasks]').count() == 0 and 'Aufträge' not in text(page, 'nav'), 'der Reiter „Aufträge“ ist ausgeblendet (TASKS_ON = false)')

@@ -277,12 +277,16 @@ class FakeOpn:
             return {'ok': True, 'settings': {key: value}}
         if cmd in ('apps', 'appdev'):                            # shaped like l7.status() of os-scdeck (Zenarmor source)
             dev = {'key': '0a:00:27:00:00:04', 'ip': '192.168.1.20', 'start': now - 30 * 86400, 'learning': False, 'apps': 2, 'unknown_share': 0.1, 'risk': 2, 'oldtls': []}
+            dev2 = {'key': '0a:00:27:00:00:09', 'ip': '192.168.1.45', 'start': now - 30 * 86400, 'learning': False, 'apps': 9, 'unknown_share': 0.7, 'risk': 3, 'oldtls': []}
+            if cmd == 'appdev' and value == dev2['key']:
+                return {'now': now, 'source': 'zenarmor', 'devices': [dict(dev2, detail=[{'app': 'netflix', 'first': now - 600, 'last': now - 60, 'n': 5, 'host': 'nflxvideo.net'}], zapps=[], unknown=[])],
+                        'apps': [], 'events': [], 'hint': ''}
             if cmd == 'appdev':
                 if not re.fullmatch(r'([0-9a-f]{2}(:[0-9a-f]{2}){5}|[0-9a-f.:]{3,45})', value):
                     return {'error': 'invalid device'}
                 dev = dict(dev, detail=[{'app': 'teamviewer', 'first': now - 600, 'last': now - 60, 'n': 12, 'host': 'router9.teamviewer.com'}],
                            zapps=[{'name': 'Netflix', 'cat': 'Streaming', 'first': now - 3600, 'last': now - 30, 'n': 340}], unknown=[])
-            return {'now': now, 'source': 'zenarmor', 'analyzer': True, 'devices': [dev],
+            return {'now': now, 'source': 'zenarmor', 'analyzer': True, 'devices': [dev] if cmd == 'appdev' else [dev, dev2],
                     'apps': [{'app': 'netflix', 'name': 'Netflix', 'cat': 'streaming', 'cat_name': 'Streaming', 'risk': 0, 'devices': 1, 'n': 340, 'last': now - 30},
                              {'app': 'teamviewer', 'name': 'TeamViewer', 'cat': 'remote_access', 'cat_name': 'Fernzugriff', 'risk': 2, 'devices': 1, 'n': 12, 'last': now - 60}],
                     'events': [], 'hint': ''}
