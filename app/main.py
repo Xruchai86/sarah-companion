@@ -307,6 +307,14 @@ def create_app(env=None, start_poller=True):
         enc = base64.urlsafe_b64encode(text.encode('utf-8')).decode().rstrip('=')
         return fw('inote', '%s|%s' % (b.get('ip', ''), enc))
 
+    @app.post('/api/incident/normal')
+    def incident_normal():
+        g = guard(True)
+        if g:
+            return g
+        b = body()
+        return fw('inorm', '%s|%s' % (b.get('ip', ''), b.get('name', '')))
+
     @app.post('/api/incident/handover')
     def incident_handover():
         g = guard(True)

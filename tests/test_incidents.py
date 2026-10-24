@@ -27,6 +27,22 @@ def test_working_on_an_incident(cli):
     assert r['result']['incidents'][0]['state'] == 'done'
 
 
+def test_a_name_is_normal_for_a_device(cli):
+    # 1.08: a button of the plan - the server name lower-cased, through the fixed command list
+    c, fw, app = cli
+    r = post(c, '/api/incident/normal', {'ip': '192.168.1.90', 'name': 'Updates.Example-IoT.net'}).get_json()
+    assert r['ok'] and ('POST', 'inorm', '192.168.1.90|updates.example-iot.net') in fw.calls and fw.normal == [('192.168.1.90', 'updates.example-iot.net')]
+    n = len(fw.calls)
+    for bad in ({'ip': '192.168.1.90', 'name': '*.x.com'}, {'ip': '192.168.1.90', 'name': 'x.com|y'}, {'ip': 'x', 'name': 'a.com'}, {'ip': '192.168.1.90', 'name': ''}):
+        assert post(c, '/api/incident/normal', bad).status_code == 400, bad
+    assert len(fw.calls) == n
+
+
+def test_the_plan_has_its_buttons():
+    js = open(__file__.rsplit('/tests/', 1)[0] + '/app/static/app.js', encoding='utf-8').read()
+    assert 'function incPlan' in js and 'data-act="inc-norm"' in js and '/api/incident/normal' in js and 'h += incPlan(i)' in js
+
+
 def test_invalid_input_never_reaches_the_firewall(cli):
     c, fw, app = cli
     n = len(fw.calls)

@@ -299,6 +299,12 @@ class FakeOpn:
             return {'rules': dict(getattr(self, 'rulemap', {}))}
         if cmd == 'incidents':
             return copy.deepcopy(self.incidents)
+        if cmd == 'inorm':                                       # 1.08: <ip>|<server name>, the rules of StatsController::sarahArgs
+            ip, _, name = value.partition('|')
+            if not re.fullmatch(r'[0-9a-fA-F.:]{3,45}', ip) or not re.fullmatch(r'([a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z0-9-]{2,63}', name) or len(name) > 200:
+                return {'error': 'invalid parameters'}
+            self.normal = getattr(self, 'normal', []) + [(ip, name)]
+            return copy.deepcopy(self.incidents)
         if cmd in ('icase', 'inote', 'ihand'):                   # the same rules as StatsController::sarahArgs (0.60)
             ip, _, rest = value.partition('|')
             if not re.fullmatch(r'[0-9a-fA-F.:]{3,45}', ip):

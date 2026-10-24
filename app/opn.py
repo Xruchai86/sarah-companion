@@ -23,6 +23,7 @@ PATH_PROTECT = '/api/scdeck/stats/protect'     # read only: status and previews 
 ID_ACTION = re.compile(r'(iso:[0-9a-fA-F.:]{3,45}:\d{1,12}|rul:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|dns:(rdr|doh|dohcore|dot)|shp:apply|ids:(alert|off):\d{1,10}|ids:sets|hrd:(dnssec|rebind|wan_blockpriv|wan_blockbogons|tlslog|evelimit)|prf:[a-z0-9_]{1,32}:(basis|standard|streng)|dvt:(apply|now|zen)|sup:(basis|standard|streng)|tsk:[0-9]{1,6}|cat:[a-z0-9-]{1,40}|pol:(([0-9a-f]{2}:){5}[0-9a-f]{2}|[0-9a-fA-F.:]{3,45}))')
 ID_JOURNAL = re.compile(r'\d{1,6}')
 CASE = re.compile(r'(new|progress|done|false):\d{1,12}')
+HOSTNAME = re.compile(r'(?=.{1,200}$)([a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z0-9-]{2,63}')
 NOTE_B64 = re.compile(r'[A-Za-z0-9_-]{1,1400}={0,2}')
 ZONE = re.compile(r'[a-z0-9_]{1,32}')
 LEVELS = ('basis', 'standard', 'streng')
@@ -74,6 +75,13 @@ def check_command(cmd, value='', key=None):
         if len(value) > (8 if cmd == 'feed' else 4) * 1024 * 1024:
             raise OpnError('Lieferung zu groß.', 'input')
         return value
+    if cmd == 'inorm':                                        # 1.08: <ip>|<server name> - this name is normal for this device
+        ip, _sep, name = value.partition('|')
+        if not (3 <= len(ip) <= 45) or not valid_ip(ip):
+            raise OpnError('Das ist keine gültige IP-Adresse.', 'input')
+        if not HOSTNAME.fullmatch(name.lower()):
+            raise OpnError('Ungültiger Name.', 'input')
+        return ip + '|' + name.lower()
     if cmd in ('icase', 'inote', 'ihand'):                    # working on an incident: <ip>|<status>:<until> | <ip>|<note, base64url> | <ip>
         ip, sep, rest = value.partition('|')
         if cmd == 'ihand' and sep:

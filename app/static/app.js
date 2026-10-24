@@ -203,12 +203,13 @@
     if (S.core) { S.core.setState(core); if (last.t && S.lastT && last.t !== S.lastT) S.core.pulse(); }
     setHud(running ? "think" : core === "act" ? "act" : core === "off" ? "off" : lv, running ? "DENKT" : core === "act" ? "HANDELT" : core === "off" ? "AUS" : LEVEL[lv][0], running ? "Analyse läuft" : "Analyse " + ago(last.t));
     S.lastT = last.t || S.lastT;
+    var pfl = (last.pflege || []).length ? '<details class="item"><summary class="tiny">PFLEGE (' + last.pflege.length + ')</summary>' + last.pflege.map(function (f) { return '<div class="item"><b>' + esc(f.title) + "</b><div>" + esc(f.text) + "</div></div>"; }).join("") + "</details>" : "";
     var find = (last.findings || []).map(function (f) { return '<div class="item"><b>' + esc(f.title) + "</b><div>" + esc(f.text) + '</div><div class="tiny">' + esc(f.ref || "") + (f.src ? " · " + esc(f.src) : "") + "</div>" + (f.unbelegt ? '<div class="warnline">Zahlen, die nicht in den Daten stehen: ' + esc((f.unbelegt || []).join ? f.unbelegt.join(", ") : f.unbelegt) + "</div>" : "") + "</div>"; }).join("");
     slot("#lage").className = "card " + (lv === "alert" ? "bad" : lv === "watch" ? "warn" : "ok");
     slot("#lage").innerHTML = '<div class="row sp"><h3 style="margin:0">Lage · ' + esc(last.t ? clock(last.t) : "–") + "</h3>" + chip(LEVEL[lv][0], LEVEL[lv][1]) + "</div>" +
       '<p class="lage-text">' + esc(last.summary || (last.ok === false ? last.error : "Noch keine Analyse.")) + "</p>" + (last.level_note ? '<div class="tiny" style="margin-bottom:8px">' + esc(last.level_note) + "</div>" : "") +
       (last.summary_unbelegt ? '<div class="warnline">Zahlen in der Zusammenfassung, die nicht in den Daten stehen: ' + esc(last.summary_unbelegt.join(", ")) + "</div>" : "") +
-      (find ? "<details><summary>Befunde (" + (last.findings || []).length + ")</summary>" + find + "</details>" : "") +
+      (find ? "<details><summary>Befunde (" + (last.findings || []).length + ")</summary>" + find + "</details>" : "") + pfl +
       '<div class="row sp" style="margin-top:10px"><span class="tiny">' + esc(last.model || "") + (last.ms ? " · " + Math.round(last.ms / 1000) + " s" : "") + (s.today ? " · " + esc(s.today.calls) + "/" + esc(s.today.cap) + " heute" : "") + '</span><button class="btn pri" data-act="analyze"' + (running ? " disabled" : "") + ">" + (running ? "Analysiere …" : "Jetzt analysieren") + "</button></div>";
     var w = waiting();
     slot("#wait").innerHTML = w.length ? '<div class="card warn"><h3>Wartet auf dich · ' + w.length + "</h3>" + w.map(function (p) {
@@ -408,6 +409,7 @@
       var s = incState(i), c = i.case || {}, open = INC.open === i.id;
       var h = '<div class="card ' + s[1] + '" data-inc="' + esc(i.id) + '"><div class="row" data-act="inc-open" data-id="' + esc(i.id) + '" style="cursor:pointer"><b style="font-size:20px;min-width:52px">' + i.score + '</b><div style="flex:1"><b>' + esc(who(i.ip)) + '</b><div class="tiny">seit ' + dayClock(i.start) + " · " + i.signals.length + (i.more ? "+" : "") + " Indizien</div></div>" + chip(s[0], s[1]) + "</div>" +
         '<div style="margin-top:8px">' + i.sources.map(function (x) { return chip(SRCN[x] || x, "cy"); }).join(" ") + (c.status && c.status !== "new" ? " " + chip((CASEN.filter(function (z) { return z[0] === c.status; })[0] || [0, c.status])[1], "vi") : "") + "</div>";
+      h += incPlan(i);                                        /* 1.08: the next steps, each with its button - always visible */
       if (open) {
         h += '<h3 style="margin-top:14px">Zeitverlauf</h3>' + i.signals.map(function (x) { return '<div class="item"><span class="tiny">' + clock(x.t) + " · " + esc(SRCN[x.src] || x.src) + "</span><b>" + esc(x.title) + '</b><div class="tiny">' + esc(x.detail || "") + "</div></div>"; }).join("") +
           "<h3>Warum dieser Wert?</h3>" + i.contrib.map(function (x) { return '<div class="row tiny"><span style="flex:1">' + esc(SRCN[x.src] || x.src) + "</span><b>+" + x.pts + "</b></div>"; }).join("") + (i.ctx ? '<div class="row tiny"><span style="flex:1">Neues Gerät</span><b>+' + i.ctx + "</b></div>" : "") +
@@ -420,6 +422,17 @@
       }
       return h + "</div>";
     }).join("");
+  }
+  function incPlan(i) {
+    var P = i.plan || [];
+    if (!P.length || i.state === "done") return "";
+    return '<div class="plan" style="margin-top:12px"><div class="tiny"><b>' + ((i.hard || []).length ? "PLAN – HARTE BELEGE" : "PLAN – KEINE HARTEN BELEGE") + "</b>" +
+      ((i.hard || []).length ? "" : " · Gefahr nicht belegt: prüfen und einordnen") + "</div>" + P.map(function (s) {
+        var b = s.kind === "do" ? '<button class="btn sm ' + (s.level === "hot" ? "bad" : "") + '" data-act="inv-do" data-id="' + esc(s.id) + '" data-l="' + esc(s.text) + '">Ausführen</button>' :
+          s.kind === "normal" ? '<button class="btn sm" data-act="inc-norm" data-ip="' + esc(i.ip) + '" data-name="' + esc(s.name) + '">Ist normal</button>' :
+          s.kind === "case" ? '<button class="btn sm" data-act="inc-case" data-ip="' + esc(i.ip) + '" data-st="' + esc(s.st) + '" data-until="' + i.ack_until + '">' + (s.st === "false" ? "Fehlalarm" : "Beobachten") + "</button>" :
+          s.kind === "handover" ? '<button class="btn sm" data-act="inc-hand" data-ip="' + esc(i.ip) + '">Untersuchen</button>' : "";
+        return '<div class="item row" style="gap:10px"><div style="flex:1" class="' + (s.kind === "check" ? "tiny" : "") + '">' + esc(s.text) + "</div>" + b + "</div>"; }).join("") + "</div>";
   }
   function incSarah(i) {
     var s = (i.case || {}).sarah || {};
@@ -833,6 +846,7 @@
     if (a === "iseg") { INC.tab = b.dataset.t; INC.open = null; updIncidents(); return; }
     if (a === "inc-open") { INC.open = INC.open === b.dataset.id ? null : b.dataset.id; updIncidents(); return; }
     if (a === "inc-case") { doThen("Gespeichert", api("POST", "/api/incident/case", { ip: b.dataset.ip, status: b.dataset.st, until: +b.dataset.until }), loadIncidents); return; }
+    if (a === "inc-norm") { b.disabled = true; doThen("Als normal markiert", api("POST", "/api/incident/normal", { ip: b.dataset.ip, name: b.dataset.name }), loadIncidents); return; }
     if (a === "inc-hand") { b.disabled = true; doThen("An S.A.R.A.H. übergeben", api("POST", "/api/incident/handover", { ip: b.dataset.ip }), loadIncidents); return; }
     if (a === "inc-note") { var nt = ($("#incNote") || {}).value || ""; if (!nt.trim()) return; doThen("Notiz gespeichert", api("POST", "/api/incident/note", { ip: b.dataset.ip, text: nt.trim() }), loadIncidents); return; }
     if (a === "inv-now") { var ip = $("#invIp").value.trim(); if (!ip) { $("#invIp").focus(); return; } doThen("Untersuchung eingeplant", api("POST", "/api/inv/now", { ip: ip }), function () { $("#invIp").value = ""; S.fastUntil = Date.now() + 300000; }); return; }
